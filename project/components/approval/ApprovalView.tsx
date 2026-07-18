@@ -1,32 +1,12 @@
 "use client";
 
-import {
-  Button,
-  Card,
-  Checkbox,
-  Chip,
-  Label,
-  Modal,
-  TextArea,
-  TextField,
-} from "@heroui/react";
-import {
-  ArrowLeft,
-  CalendarCheck2,
-  Check,
-  CheckCircle2,
-  Clock3,
-  Info,
-  Mail,
-  PencilLine,
-  Send,
-  ShieldCheck,
-} from "lucide-react";
+import { Button, Checkbox } from "@heroui/react";
+import { ArrowDown, ArrowLeft, CalendarDays, Check, Mail } from "lucide-react";
 import { useMemo, useState } from "react";
 
-import type { EmailDraft, TomorrowPlan } from "@/types/echly";
+import type { TomorrowPlan } from "@/types/echly";
 
-type ApprovalViewProps = {
+type Props = {
   plan: TomorrowPlan;
   appliedActionIds: string[];
   onPlanChange: (plan: TomorrowPlan) => void;
@@ -34,301 +14,108 @@ type ApprovalViewProps = {
   onBack: () => void;
 };
 
-type CalendarAction = {
-  id: string;
-  title: string;
-  before: string;
-  after: string;
-  reason: string;
-  kind: "move" | "reschedule" | "rest";
-};
-
-function getCalendarActions(plan: TomorrowPlan): CalendarAction[] {
-  return [
-    ...plan.move.map((item) => ({
-      id: item.id,
-      title: item.title,
-      before: item.originalTime ?? "時間未定",
-      after: item.proposedTime ?? "時間未定",
-      reason: item.reason,
-      kind: "move" as const,
-    })),
-    ...plan.reschedule.map((item) => ({
-      id: item.id,
-      title: item.title,
-      before: item.originalTime ?? "時間未定",
-      after: item.proposedTime ?? "翌日以降",
-      reason: item.reason,
-      kind: "reschedule" as const,
-    })),
-    ...plan.restBlocks.map((item) => ({
-      id: item.id,
-      title: "回復ブロックを追加",
-      before: "予定なし",
-      after: `${item.startTime} - ${item.endTime}`,
-      reason: item.reason,
-      kind: "rest" as const,
-    })),
-  ];
+function actionIds(plan: TomorrowPlan) {
+  return [...plan.move, ...plan.reschedule, ...plan.restBlocks, ...plan.emailDrafts].map((item) => item.id);
 }
 
 function ApprovalCheckbox({
-  isSelected,
-  onChange,
+  id,
   label,
+  selected,
+  onToggle,
 }: {
-  isSelected: boolean;
-  onChange: (selected: boolean) => void;
+  id: string;
   label: string;
+  selected: boolean;
+  onToggle: (id: string, value: boolean) => void;
 }) {
   return (
-    <Checkbox isSelected={isSelected} onChange={onChange} aria-label={label}>
+    <Checkbox
+      isSelected={selected}
+      onChange={(value) => onToggle(id, value)}
+      aria-label={label}
+      className="shrink-0"
+    >
       <Checkbox.Content>
         <Checkbox.Control>
           <Checkbox.Indicator />
         </Checkbox.Control>
-        <span className="text-sm font-medium text-[#3b4744]">{label}</span>
       </Checkbox.Content>
     </Checkbox>
   );
 }
 
-export function ApprovalView({
-  plan,
-  appliedActionIds,
-  onPlanChange,
-  onApply,
-  onBack,
-}: ApprovalViewProps) {
-  const calendarActions = useMemo(() => getCalendarActions(plan), [plan]);
-  const allIds = useMemo(
-    () => [...calendarActions.map((item) => item.id), ...plan.emailDrafts.map((draft) => draft.id)],
-    [calendarActions, plan.emailDrafts],
-  );
-  const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set(allIds));
-  const [confirmOpen, setConfirmOpen] = useState(false);
-  const applied = new Set(appliedActionIds);
+export function ApprovalView({ plan, appliedActionIds, onApply, onBack }: Props) {
+  const allIds = useMemo(() => actionIds(plan), [plan]);
+  const [selected, setSelected] = useState(() => new Set(allIds));
+  const pending = allIds.filter((id) => selected.has(id) && !appliedActionIds.includes(id));
 
-  function toggle(id: string, selected: boolean) {
-    setSelectedIds((current) => {
-      const next = new Set(current);
-      if (selected) next.add(id);
-      else next.delete(id);
-      return next;
-    });
+  function toggle(id: string, value: boolean) {
+    setSelected((current) => { const next = new Set(current); if (value) next.add(id); else next.delete(id); return next; });
   }
-
-  function toggleAll(selected: boolean) {
-    setSelectedIds(selected ? new Set(allIds.filter((id) => !applied.has(id))) : new Set());
-  }
-
-  function updateDraft(id: string, body: string) {
-    onPlanChange({
-      ...plan,
-      emailDrafts: plan.emailDrafts.map((draft) => (draft.id === id ? { ...draft, body } : draft)),
-    });
-  }
-
-  function applySelected() {
-    onApply(Array.from(selectedIds));
-    setConfirmOpen(false);
-  }
-
-  const pendingSelected = Array.from(selectedIds).filter((id) => !applied.has(id));
-  const allSelected = pendingSelected.length > 0 && pendingSelected.length === allIds.filter((id) => !applied.has(id)).length;
 
   return (
-    <div className="space-y-4 sm:space-y-5">
-      <section className="flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
-        <div>
-          <Button variant="ghost" size="sm" onPress={onBack} className="mb-2 px-0 text-[#53615d]">
-            <ArrowLeft size={16} />
-            明日のプランへ戻る
-          </Button>
-          <div className="flex flex-wrap items-center gap-2">
-            <h1 className="text-[22px] font-semibold leading-8">変更の確認と承認</h1>
-            <Chip size="sm" variant="soft" color="warning">
-              未適用
-            </Chip>
+    <div>
+      <header className="grid h-16 grid-cols-[44px_1fr_44px] items-center border-b border-[#ececf3] px-3 pt-[env(safe-area-inset-top)]">
+        <button type="button" onClick={onBack} aria-label="戻る" className="grid size-10 place-items-center"><ArrowLeft size={20} /></button>
+        <h1 className="text-center text-base font-bold">変更の確認</h1><span />
+      </header>
+
+      <div className="space-y-3 px-4 pb-8 pt-4">
+        {appliedActionIds.length ? <div className="flex items-center gap-2 rounded-lg bg-[#eefaf6] px-4 py-3 text-sm font-medium text-[#26785f]"><Check size={17} />{appliedActionIds.length}件を適用しました</div> : null}
+
+        <section className="rounded-lg border border-[#e3e5ef] p-4">
+          <h2 className="flex items-center gap-2 text-xs font-bold text-[#4e3ad0]"><CalendarDays size={15} />カレンダーの変更</h2>
+          <div className="mt-3 space-y-3">
+            {plan.move.map((item) => (
+              <label key={item.id} className="flex items-start gap-3">
+                <ApprovalCheckbox id={item.id} label={item.title} selected={selected.has(item.id)} onToggle={toggle} />
+                <div className="min-w-0 flex-1">
+                  <p className="break-words text-sm font-bold">{item.title}</p>
+                  <div className="mt-2 rounded-md border border-[#cfe1f7] bg-[#f4f8ff] px-3 py-2 text-xs text-[#365f9c]">{item.originalTime ?? "未定"} → {item.proposedTime ?? "未定"}</div>
+                </div>
+              </label>
+            ))}
+            {plan.reschedule.map((item) => (
+              <label key={item.id} className="flex items-start gap-3">
+                <ApprovalCheckbox id={item.id} label={item.title} selected={selected.has(item.id)} onToggle={toggle} />
+                <div className="min-w-0 flex-1">
+                  <p className="break-words text-sm font-bold">{item.title}</p>
+                  <div className="mt-2 space-y-2 text-xs">
+                    <p className="rounded-md border border-[#cfe1f7] bg-[#f4f8ff] px-3 py-2">{item.originalTime ?? "未定"}</p>
+                    <ArrowDown size={14} className="mx-auto text-[#747c99]" />
+                    <p className="rounded-md border border-[#ffd1b3] bg-[#fff7ee] px-3 py-2 text-[#bd632c]">{item.proposedTime ?? "翌日以降"}</p>
+                  </div>
+                </div>
+              </label>
+            ))}
+            {plan.restBlocks.map((item) => (
+              <label key={item.id} className="flex items-start gap-3">
+                <ApprovalCheckbox id={item.id} label="休息ブロック" selected={selected.has(item.id)} onToggle={toggle} />
+                <div className="min-w-0 flex-1"><p className="text-sm font-bold">休息ブロック</p><p className="mt-2 rounded-md border border-[#f1c4d3] bg-[#fff4f7] px-3 py-2 text-xs text-[#bd3c67]">{item.startTime} - {item.endTime}</p></div>
+              </label>
+            ))}
           </div>
-          <p className="mt-1 text-sm leading-6 text-[#687471]">
-            選択した変更だけを適用します。メールは送信されず、下書きとして扱います。
-          </p>
+        </section>
+
+        {plan.emailDrafts.map((draft) => (
+          <section key={draft.id} className="rounded-lg border border-[#e3e5ef] p-4">
+            <label className="flex items-center gap-3">
+              <ApprovalCheckbox id={draft.id} label="メール下書き" selected={selected.has(draft.id)} onToggle={toggle} />
+              <h2 className="flex items-center gap-2 text-xs font-bold text-[#4e3ad0]"><Mail size={15} />メール下書き</h2>
+            </label>
+            <dl className="mt-3 space-y-2 text-xs">
+              <div><dt className="font-bold">宛先</dt><dd className="mt-1 break-words rounded-md border border-[#e5e7ef] px-3 py-2">{draft.to.join("、")}</dd></div>
+              <div><dt className="font-bold">件名</dt><dd className="mt-1 break-words rounded-md border border-[#e5e7ef] px-3 py-2">{draft.subject}</dd></div>
+              <div><dt className="font-bold">本文プレビュー</dt><dd className="mt-1 max-h-28 overflow-hidden whitespace-pre-wrap rounded-md border border-[#e5e7ef] px-3 py-2 leading-5 text-[#555e7b]">{draft.body}</dd></div>
+            </dl>
+          </section>
+        ))}
+
+        <div className="grid grid-cols-[82px_1fr] gap-3 pt-1 min-[380px]:grid-cols-[96px_1fr]">
+          <Button variant="outline" size="lg" onPress={onBack} className="h-12">却下</Button>
+          <Button variant="primary" size="lg" isDisabled={!pending.length} onPress={() => onApply(pending)} className="h-12 min-w-0 bg-[#5b42ff] px-2 text-xs text-white min-[380px]:text-sm">すべて承認して実行</Button>
         </div>
-        <div className="flex items-center gap-2 text-xs text-[#65716e]">
-          <ShieldCheck size={16} className="text-[#397466]" />
-          自動送信・自動変更は行いません
-        </div>
-      </section>
-
-      {appliedActionIds.length ? (
-        <div className="flex items-center gap-3 rounded-md border border-[#bcd8cf] bg-[#edf7f3] px-4 py-3 text-sm text-[#285f54]">
-          <CheckCircle2 size={18} />
-          選択した{appliedActionIds.length}件をデモ環境へ適用しました。
-        </div>
-      ) : null}
-
-      <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-[#dce2e0] bg-white px-4 py-3">
-        <ApprovalCheckbox isSelected={allSelected} onChange={toggleAll} label="未適用の項目をすべて選択" />
-        <p className="text-xs text-[#6f7b78]">
-          {pendingSelected.length} / {allIds.filter((id) => !applied.has(id)).length}件を選択中
-        </p>
-      </div>
-
-      <div className="grid gap-4 lg:grid-cols-[minmax(0,1.15fr)_minmax(320px,0.85fr)]">
-        <Card className="border border-[#dbe1df] bg-white shadow-none">
-          <Card.Header className="flex-row items-start justify-between gap-4 px-5 pt-5 sm:px-6 sm:pt-6">
-            <div>
-              <Card.Title className="flex items-center gap-2 text-lg font-semibold">
-                <CalendarCheck2 size={19} className="text-[#2c675c]" />
-                Calendar変更案
-              </Card.Title>
-              <Card.Description className="mt-1 text-sm text-[#6e7976]">
-                時間変更、日程調整、回復ブロック
-              </Card.Description>
-            </div>
-            <Chip size="sm" variant="soft" color="success">
-              {calendarActions.length}件
-            </Chip>
-          </Card.Header>
-          <Card.Content className="px-5 pb-5 pt-4 sm:px-6 sm:pb-6">
-            <div className="divide-y divide-[#e3e8e6]">
-              {calendarActions.map((action) => {
-                const isApplied = applied.has(action.id);
-                return (
-                  <div key={action.id} className={`py-4 first:pt-0 last:pb-0 ${isApplied ? "opacity-65" : ""}`}>
-                    <div className="flex items-start gap-3">
-                      <ApprovalCheckbox
-                        isSelected={isApplied || selectedIds.has(action.id)}
-                        onChange={(selected) => toggle(action.id, selected)}
-                        label={isApplied ? "適用済み" : "この変更を選択"}
-                      />
-                      <div className="min-w-0 flex-1">
-                        <div className="flex flex-wrap items-start justify-between gap-2">
-                          <p className="font-medium text-[#303b38]">{action.title}</p>
-                          <Chip size="sm" variant="soft" color={isApplied ? "success" : action.kind === "rest" ? "accent" : "warning"}>
-                            {isApplied ? "適用済み" : action.kind === "rest" ? "追加" : "変更"}
-                          </Chip>
-                        </div>
-                        <div className="mt-3 grid grid-cols-[1fr_auto_1fr] items-center gap-2 rounded-md bg-[#f6f8f7] px-3 py-2.5 text-sm">
-                          <span className="truncate text-[#7b6560] line-through">{action.before}</span>
-                          <span className="text-[#8a9592]">→</span>
-                          <span className="truncate font-semibold text-[#2f645a]">{action.after}</span>
-                        </div>
-                        <p className="mt-2 text-xs leading-5 text-[#6b7673]">{action.reason}</p>
-                      </div>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          </Card.Content>
-        </Card>
-
-        <div className="space-y-5">
-          {plan.emailDrafts.map((draft: EmailDraft) => {
-            const isApplied = applied.has(draft.id);
-            return (
-              <Card key={draft.id} className={`border border-[#dbe1df] bg-white shadow-none ${isApplied ? "opacity-70" : ""}`}>
-                <Card.Header className="flex-row items-start justify-between gap-3 px-5 pt-5">
-                  <div>
-                    <Card.Title className="flex items-center gap-2 text-base font-semibold">
-                      <Mail size={18} className="text-[#9a5947]" />
-                      メール下書き
-                    </Card.Title>
-                    <Card.Description className="mt-1 text-sm text-[#6e7976]">
-                      宛先候補: {draft.to.join("、")}
-                    </Card.Description>
-                  </div>
-                  <ApprovalCheckbox
-                    isSelected={isApplied || selectedIds.has(draft.id)}
-                    onChange={(selected) => toggle(draft.id, selected)}
-                    label={isApplied ? "作成済み" : "下書きを選択"}
-                  />
-                </Card.Header>
-                <Card.Content className="px-5 pb-5 pt-4">
-                  <div className="rounded-md border border-[#e1e6e4] bg-[#fafbfa] p-3">
-                    <p className="text-xs text-[#78837f]">件名</p>
-                    <p className="mt-1 text-sm font-medium text-[#36423f]">{draft.subject}</p>
-                  </div>
-                  <TextField fullWidth className="mt-3">
-                    <Label className="flex items-center gap-1.5 text-xs font-medium text-[#68736f]">
-                      <PencilLine size={13} />
-                      本文を編集
-                    </Label>
-                    <TextArea
-                      value={draft.body}
-                      onChange={(event) => updateDraft(draft.id, event.target.value)}
-                      rows={10}
-                      fullWidth
-                      className="mt-1.5 min-h-56 resize-y whitespace-pre-wrap text-sm leading-6"
-                      disabled={isApplied}
-                    />
-                  </TextField>
-                  <p className="mt-3 flex gap-2 text-xs leading-5 text-[#756961]">
-                    <Info size={14} className="mt-0.5 shrink-0" />
-                    {draft.caution}
-                  </p>
-                </Card.Content>
-              </Card>
-            );
-          })}
-
-          {!plan.emailDrafts.length ? (
-            <section className="rounded-md border border-[#dfe5e3] bg-[#f8faf9] p-5 text-sm text-[#677370]">
-              メール下書きが必要な変更はありません。
-            </section>
-          ) : null}
-        </div>
-      </div>
-
-      <div className="sticky bottom-[68px] z-10 -mx-4 flex flex-col items-stretch justify-between gap-3 border-t border-[#dce2e0] bg-[#eef2f0]/95 px-4 py-3 backdrop-blur sm:flex-row sm:items-center lg:bottom-0 lg:mx-0 lg:bg-transparent lg:px-0">
-        <p className="flex items-center gap-2 text-xs text-[#66716e]">
-          <Clock3 size={15} />
-          適用時刻と選択内容は履歴に保存されます
-        </p>
-        {!pendingSelected.length ? (
-          <Button variant="primary" size="lg" fullWidth isDisabled className="h-12 px-5 sm:w-auto">
-            <Check size={18} />
-            選択した0件を適用
-          </Button>
-        ) : (
-          <Modal isOpen={confirmOpen} onOpenChange={setConfirmOpen}>
-            <Modal.Trigger className="flex h-12 w-full items-center justify-center gap-2 rounded-lg bg-[#195b52] px-5 text-sm font-semibold text-white outline-none transition-colors hover:bg-[#144b44] focus-visible:ring-2 focus-visible:ring-[#438b7d] focus-visible:ring-offset-2 sm:w-auto">
-              <Check size={18} />
-              選択した{pendingSelected.length}件を適用
-            </Modal.Trigger>
-            <Modal.Backdrop isDismissable>
-              <Modal.Container size="md">
-                <Modal.Dialog>
-                  <Modal.Header>
-                    <Modal.Icon className="bg-[#e2efeb] text-[#2b685d]">
-                      <ShieldCheck size={22} />
-                    </Modal.Icon>
-                    <Modal.Heading>選択した変更を適用しますか？</Modal.Heading>
-                  </Modal.Header>
-                  <Modal.Body>
-                    <p className="text-sm leading-6 text-[#5e6a67]">
-                      Calendar変更とGmail下書き作成をデモ環境へ反映します。実際のGoogleアカウントには接続しません。
-                    </p>
-                    <div className="mt-4 rounded-md bg-[#f3f6f5] px-4 py-3 text-sm font-medium text-[#35413e]">
-                      適用対象: {pendingSelected.length}件
-                    </div>
-                  </Modal.Body>
-                  <Modal.Footer>
-                    <Button variant="ghost" onPress={() => setConfirmOpen(false)}>
-                      キャンセル
-                    </Button>
-                    <Button variant="primary" onPress={applySelected} className="bg-[#1d5b50] text-white">
-                      <Send size={17} />
-                      デモ環境へ適用
-                    </Button>
-                  </Modal.Footer>
-                </Modal.Dialog>
-              </Modal.Container>
-            </Modal.Backdrop>
-          </Modal>
-        )}
       </div>
     </div>
   );

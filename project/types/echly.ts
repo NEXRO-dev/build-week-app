@@ -12,6 +12,19 @@ export type Importance = "high" | "medium" | "low";
 export type Burden = "high" | "medium" | "low";
 export type Impact = "low" | "medium" | "high";
 export type EmailTone = "polite" | "casual" | "formal";
+export type ExtractedItemKind = "task" | "event" | "topic";
+export type TemporalContext =
+  | "past"
+  | "today"
+  | "tomorrow"
+  | "future"
+  | "unspecified";
+export type TaskStatus =
+  | "completed"
+  | "in_progress"
+  | "pending"
+  | "cancelled"
+  | "unknown";
 
 export type AudioMeta = {
   durationSec: number;
@@ -31,6 +44,9 @@ export type ConditionSignal = {
 export type ExtractedTask = {
   id: string;
   title: string;
+  kind: ExtractedItemKind;
+  temporalContext: TemporalContext;
+  status: TaskStatus;
   type: TaskType;
   date: string | null;
   startTime: string | null;

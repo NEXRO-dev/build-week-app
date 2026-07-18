@@ -2,8 +2,8 @@
 @import "@heroui/styles";
 
 :root {
-  --background: #eef2f0;
-  --foreground: #18201f;
+  --background: #f7f8fc;
+  --foreground: #111735;
 }
 
 @theme inline {
@@ -36,9 +36,55 @@ button:not(:disabled) {
 }
 
 ::selection {
-  background: #c7ded8;
-  color: #183c37;
+  background: #ded9ff;
+  color: #281b76;
 }
+
+.echly-logo {
+  display: grid;
+  width: 22px;
+  height: 22px;
+  transform: rotate(-10deg);
+}
+
+.echly-logo i {
+  grid-area: 1 / 1;
+  align-self: center;
+  display: block;
+  height: 6px;
+  border-radius: 99px;
+  background: linear-gradient(90deg, #6f55ff, #bf57f5);
+}
+
+.echly-logo i:nth-child(1) { width: 22px; transform: translateY(-7px); }
+.echly-logo i:nth-child(2) { width: 17px; transform: translateX(3px); }
+.echly-logo i:nth-child(3) { width: 12px; transform: translate(6px, 7px); }
+
+.voice-wave,
+.analysis-wave {
+  display: flex;
+  width: 100%;
+  height: 58px;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  overflow: hidden;
+}
+
+.voice-wave span,
+.analysis-wave span {
+  width: 2px;
+  min-height: 5px;
+  border-radius: 99px;
+  background: #b9b1ff;
+  transform-origin: center;
+  transition: height 180ms ease, opacity 180ms ease;
+}
+
+.analysis-wave span { background: #6047ff; }
+.voice-wave.is-recording span { animation: waveform-pulse 850ms ease-in-out infinite alternate; background: #6a50ff; }
+.voice-wave.is-recording span:nth-child(3n) { animation-delay: 120ms; }
+.voice-wave.is-recording span:nth-child(4n) { animation-delay: 240ms; }
 
 .echly-mark {
   display: flex;
@@ -142,13 +188,13 @@ button:not(:disabled) {
 
 @keyframes record-ring {
   0% {
-    box-shadow: 0 0 0 0 rgba(187, 74, 57, 0.28);
+    box-shadow: 0 0 0 0 rgba(91, 66, 255, 0.22);
   }
   70% {
-    box-shadow: 0 0 0 14px rgba(187, 74, 57, 0);
+    box-shadow: 0 0 0 14px rgba(91, 66, 255, 0);
   }
   100% {
-    box-shadow: 0 0 0 0 rgba(187, 74, 57, 0);
+    box-shadow: 0 0 0 0 rgba(91, 66, 255, 0);
   }
 }
 

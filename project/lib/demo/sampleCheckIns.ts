@@ -4,6 +4,8 @@ import type {
   CheckIn,
   ConditionLevel,
   ExtractedTask,
+  TaskStatus,
+  TemporalContext,
   TomorrowPlan,
 } from "@/types/echly";
 
@@ -49,26 +51,70 @@ function createGenericTasks(transcript: string): ExtractedTask[] {
     .filter((sentence) => sentence.length >= 4)
     .slice(0, 5);
 
-  return sentences.map((sentence, index) => ({
-    id: `demo-task-${index + 1}`,
-    title: sentence.length > 34 ? `${sentence.slice(0, 34)}...` : sentence,
-    type: sentence.includes("会議")
-      ? "meeting"
-      : sentence.includes("資料")
-        ? "focus_work"
-        : "unknown",
-    date: null,
-    startTime: sentence.match(/(\d{1,2})時/)?.[1]
-      ? `${sentence.match(/(\d{1,2})時/)?.[1]?.padStart(2, "0")}:00`
-      : null,
-    endTime: null,
-    deadline: null,
-    people: [],
-    importance: index === 0 ? "high" : "medium",
-    movable: index !== 0,
-    burden: index === 0 ? "medium" : "high",
-    sourceText: sentence,
-  }));
+  let inheritedTemporalContext: TemporalContext = "unspecified";
+
+  return sentences.map((sentence, index) => {
+    const hasPendingIntent = /ないと|必要|予定|つもり|する$|やる$|仕上げる|送る|連絡する/.test(sentence);
+    const explicitTemporalContext: TemporalContext = /昨日|先週|先月/.test(sentence)
+      ? "past"
+      : /明日|あした|翌日/.test(sentence)
+        ? "tomorrow"
+        : /今日|きょう|さっき|先ほど/.test(sentence)
+          ? "today"
+          : /来週|来月|再来週|月末|今度/.test(sentence)
+            ? "future"
+            : "unspecified";
+    const temporalContext = explicitTemporalContext !== "unspecified"
+      ? explicitTemporalContext
+      : inheritedTemporalContext === "past" && hasPendingIntent
+        ? "unspecified"
+        : inheritedTemporalContext;
+
+    if (explicitTemporalContext !== "unspecified") {
+      inheritedTemporalContext = explicitTemporalContext;
+    }
+
+    const status: TaskStatus = /終わった|終えた|やった|済ませた|完了した|提出した|した$/.test(sentence)
+      ? "completed"
+      : /中止|キャンセル/.test(sentence)
+        ? "cancelled"
+        : /途中|進めている|対応中/.test(sentence)
+          ? "in_progress"
+          : temporalContext === "tomorrow" || temporalContext === "future" || hasPendingIntent
+            ? "pending"
+            : "unknown";
+    const isEvent = /会議|面談|打ち合わせ|ミーティング|予約/.test(sentence);
+    const isLoadTopic = /疲れ|眠|寝て|しんど|頭が回ら|焦|不安/.test(sentence);
+
+    return {
+      id: `demo-task-${index + 1}`,
+      title: sentence.length > 34 ? `${sentence.slice(0, 34)}...` : sentence,
+      kind: isLoadTopic ? "topic" : isEvent ? "event" : "task",
+      temporalContext,
+      status,
+      type: isEvent
+        ? "meeting"
+        : sentence.includes("資料")
+          ? "focus_work"
+          : "unknown",
+      date:
+        temporalContext === "tomorrow"
+          ? "明日"
+          : temporalContext === "today"
+            ? "今日"
+            : null,
+      startTime: sentence.match(/(\d{1,2})時/)?.[1]
+        ? `${sentence.match(/(\d{1,2})時/)?.[1]?.padStart(2, "0")}:00`
+        : null,
+      endTime: null,
+      deadline: null,
+      people: [],
+      importance: index === 0 ? "high" : "medium",
+      movable: !isEvent,
+      burden: isLoadTopic ? "high" : index === 0 ? "medium" : "high",
+      sourceText: sentence,
+    };
+  });
 }
 
 export function createDemoAnalysis(transcript: string): AnalysisResult {
@@ -82,6 +128,9 @@ export function createDemoAnalysis(transcript: string): AnalysisResult {
         {
           id: "task-budget",
           title: "A社の予算会議",
+          kind: "event",
+          temporalContext: "tomorrow",
+          status: "pending",
           type: "meeting",
           date: "明日",
           startTime: "10:00",
@@ -96,6 +145,9 @@ export function createDemoAnalysis(transcript: string): AnalysisResult {
         {
           id: "task-deck",
           title: "提案資料の仕上げ",
+          kind: "task",
+          temporalContext: "tomorrow",
+          status: "pending",
           type: "focus_work",
           date: "明日",
           startTime: null,
@@ -110,6 +162,9 @@ export function createDemoAnalysis(transcript: string): AnalysisResult {
         {
           id: "task-brainstorm",
           title: "Cさんとブレスト",
+          kind: "event",
+          temporalContext: "tomorrow",
+          status: "pending",
           type: "meeting",
           date: "明日",
           startTime: "17:00",
@@ -131,7 +186,10 @@ export function createDemoAnalysis(transcript: string): AnalysisResult {
         : [
             {
               id: "demo-task-1",
-              title: "発話内容を確認する",
+              title: "発話内容",
+              kind: "topic",
+              temporalContext: "unspecified",
+              status: "unknown",
               type: "unknown",
               date: null,
               startTime: null,
@@ -156,7 +214,7 @@ export function createDemoPlan(
   const focusTask =
     tasks.find((task) => task.type === "focus_work") ?? tasks[1] ?? tasks[0];
   const rescheduleTask =
-    [...tasks].reverse().find((task) => task.movable && task.id !== focusTask.id) ??
+    [...tasks].reverse().find((task) => task.movable && task.id !== focusTask?.id) ??
     tasks.find((task) => task.movable);
 
   return {

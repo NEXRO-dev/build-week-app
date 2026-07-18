@@ -16,6 +16,7 @@ import {
   createDemoPlan,
   getSampleHistory,
 } from "@/lib/demo/sampleCheckIns";
+import { isTomorrowActionableTask } from "@/lib/tasks/temporal";
 import type {
   AnalysisResult,
   AudioMeta,
@@ -41,6 +42,14 @@ class ApiClientError extends Error {
     this.name = "ApiClientError";
     this.code = code;
   }
+}
+
+function canUseDemoFallback(error: unknown) {
+  return (
+    error instanceof ApiClientError &&
+    (error.code === "OPENAI_API_KEY_MISSING" ||
+      error.code === "OPENAI_QUOTA_EXCEEDED")
+  );
 }
 
 async function parseApiResponse<T>(response: Response): Promise<T> {
@@ -104,8 +113,6 @@ export function EchlyApp({ todayLabel }: EchlyAppProps) {
     window.scrollTo({ top: 0, behavior: "auto" });
   }, [view]);
 
-  const conditionLevel = analysis?.condition.level;
-
   const actionCount = useMemo(() => {
     if (!plan) return 0;
     return (
@@ -150,19 +157,14 @@ export function EchlyApp({ todayLabel }: EchlyAppProps) {
             ? `${transcribed.transcript}\n\n補足: ${resolvedTranscript}`
             : transcribed.transcript;
         } catch (transcribeError) {
-          if (
-            transcribeError instanceof ApiClientError &&
-            transcribeError.code === "OPENAI_API_KEY_MISSING" &&
-            resolvedTranscript
-          ) {
+          if (canUseDemoFallback(transcribeError) && resolvedTranscript) {
             useDemo = true;
-          } else if (
-            transcribeError instanceof ApiClientError &&
-            transcribeError.code === "OPENAI_API_KEY_MISSING"
-          ) {
+          } else if (canUseDemoFallback(transcribeError)) {
             throw new ApiClientError(
-              "音声の文字起こしにはOpenAI APIキーが必要です。今回は「デモ用の発話を入力」またはテキスト入力を利用してください。",
-              transcribeError.code,
+              "現在、音声を文字起こしできません。「テキストで入力」から内容を入力すると、デモ解析を利用できます。",
+              transcribeError instanceof ApiClientError
+                ? transcribeError.code
+                : "OPENAI_REQUEST_FAILED",
             );
           } else {
             throw transcribeError;
@@ -195,14 +197,14 @@ export function EchlyApp({ todayLabel }: EchlyAppProps) {
             body: JSON.stringify({
               transcript: resolvedTranscript,
               audioMeta: resolvedAudioMeta,
+              referenceDate: new Date().toISOString(),
+              timeZone:
+                Intl.DateTimeFormat().resolvedOptions().timeZone || "Asia/Tokyo",
             }),
           });
           result = await parseApiResponse<AnalysisResult>(analyzeResponse);
         } catch (analyzeError) {
-          if (
-            analyzeError instanceof ApiClientError &&
-            analyzeError.code === "OPENAI_API_KEY_MISSING"
-          ) {
+          if (canUseDemoFallback(analyzeError)) {
             result = createDemoAnalysis(resolvedTranscript);
             useDemo = true;
           } else {
@@ -232,16 +234,17 @@ export function EchlyApp({ todayLabel }: EchlyAppProps) {
 
     try {
       let nextPlan: TomorrowPlan;
+      const tomorrowTasks = analysis.tasks.filter(isTomorrowActionableTask);
 
       if (source === "demo") {
         await new Promise((resolve) => window.setTimeout(resolve, 450));
-        nextPlan = createDemoPlan(analysis.tasks, analysis.condition);
+        nextPlan = createDemoPlan(tomorrowTasks, analysis.condition);
       } else {
         const response = await fetch("/api/plan", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            tasks: analysis.tasks,
+            tasks: tomorrowTasks,
             condition: analysis.condition,
             calendarEvents: mockCalendarEvents,
           }),
@@ -251,10 +254,7 @@ export function EchlyApp({ todayLabel }: EchlyAppProps) {
           const data = await parseApiResponse<{ plan: TomorrowPlan }>(response);
           nextPlan = data.plan;
         } catch (planError) {
-          if (
-            planError instanceof ApiClientError &&
-            planError.code === "OPENAI_API_KEY_MISSING"
-          ) {
+          if (canUseDemoFallback(planError)) {
             nextPlan = createDemoPlan(analysis.tasks, analysis.condition);
             setSource("demo");
           } else {
@@ -325,7 +325,6 @@ export function EchlyApp({ todayLabel }: EchlyAppProps) {
         transcript={transcript}
         audioMeta={audioMeta}
         tasks={analysis.tasks}
-        onTasksChange={(tasks) => setAnalysis({ ...analysis, tasks })}
         condition={analysis.condition}
         source={source}
         onBack={() => setView("checkin")}
@@ -384,11 +383,7 @@ export function EchlyApp({ todayLabel }: EchlyAppProps) {
   }
 
   return (
-    <AppShell
-      view={view}
-      onViewChange={setView}
-      conditionLevel={conditionLevel}
-    >
+    <AppShell view={view} onViewChange={setView}>
       {content}
     </AppShell>
   );

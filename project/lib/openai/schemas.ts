@@ -18,6 +18,21 @@ export const ConditionSignalSchema = z.object({
 export const ExtractedTaskSchema = z.object({
   id: z.string(),
   title: z.string(),
+  kind: z.enum(["task", "event", "topic"]),
+  temporalContext: z.enum([
+    "past",
+    "today",
+    "tomorrow",
+    "future",
+    "unspecified",
+  ]),
+  status: z.enum([
+    "completed",
+    "in_progress",
+    "pending",
+    "cancelled",
+    "unknown",
+  ]),
   type: z.enum([
     "meeting",
     "focus_work",
@@ -91,10 +106,12 @@ export const CalendarEventSchema = z.object({
 export const AnalyzeRequestSchema = z.object({
   transcript: z.string().trim().min(1).max(12000),
   audioMeta: AudioMetaSchema,
+  referenceDate: z.string().datetime(),
+  timeZone: z.string().min(1).max(100),
 });
 
 export const PlanRequestSchema = z.object({
-  tasks: z.array(ExtractedTaskSchema).min(1).max(30),
+  tasks: z.array(ExtractedTaskSchema).max(30),
   condition: ConditionSignalSchema,
   calendarEvents: z.array(CalendarEventSchema).max(50),
 });
