@@ -1,13 +1,15 @@
 "use client";
 
 import { Button } from "@heroui/react";
-import { ArrowLeft, ArrowRight, CalendarDays, LoaderCircle, Share2 } from "lucide-react";
+import { ArrowLeft, ArrowRight, CalendarDays, LoaderCircle, Upload } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import type { AudioMeta, ConditionLevel, ExtractedTask, TaskType } from "@/types/echly";
 import { isTomorrowActionableTask } from "@/lib/tasks/temporal";
 
 type Props = {
   transcript: string;
+  audioBlob: Blob | null;
   audioMeta: AudioMeta;
   tasks: ExtractedTask[];
   condition: { level: ConditionLevel; label: string; summary: string; evidence: string[]; disclaimer: string };
@@ -53,7 +55,9 @@ function analysisGroupFor(task: ExtractedTask): AnalysisGroup {
   ) return "reflection";
   return "other";
 }
-const wave = [12,20,35,26,45,22,31,48,25,17,39,52,28,44,21,35,59,27,18,45,33,54,24,38,17,30,48,20,35,14,28,42,19,31,12];
+const waveformBarCount = 56;
+const waveformMinHeight = 6;
+const waveformMaxHeight = 52;
 
 function scoreFor(level: ConditionLevel) { return level === "high" ? 72 : level === "caution" ? 58 : 34; }
 function formatDuration(seconds: number) {
@@ -61,8 +65,72 @@ function formatDuration(seconds: number) {
   return `${Math.floor(total / 60).toString().padStart(2, "0")}:${(total % 60).toString().padStart(2, "0")}`;
 }
 
-export function AnalysisView({ transcript, audioMeta, tasks, condition, onBack, onCreatePlan, processingStage, error }: Props) {
+async function createWaveformHeights(blob: Blob) {
+  const AudioContextClass =
+    window.AudioContext ||
+    (window as typeof window & { webkitAudioContext?: typeof AudioContext })
+      .webkitAudioContext;
+
+  if (!AudioContextClass) return null;
+
+  const context = new AudioContextClass();
+  try {
+    const buffer = await context.decodeAudioData(await blob.arrayBuffer());
+    const channelData = buffer.getChannelData(0);
+    const bucketSize = Math.max(1, Math.floor(channelData.length / waveformBarCount));
+    const peaks = Array.from({ length: waveformBarCount }, (_, bucketIndex) => {
+      const start = bucketIndex * bucketSize;
+      const end = bucketIndex === waveformBarCount - 1
+        ? channelData.length
+        : Math.min(channelData.length, start + bucketSize);
+      let peak = 0;
+
+      for (let index = start; index < end; index += 1) {
+        peak = Math.max(peak, Math.abs(channelData[index] ?? 0));
+      }
+
+      return peak;
+    });
+    const maxPeak = Math.max(...peaks, 0.01);
+
+    return peaks.map((peak) => {
+      const normalized = Math.sqrt(peak / maxPeak);
+      return Math.round(waveformMinHeight + normalized * (waveformMaxHeight - waveformMinHeight));
+    });
+  } finally {
+    await context.close();
+  }
+}
+
+function shareTextFor(condition: Props["condition"], groupedTasks: Record<AnalysisGroup, ExtractedTask[]>) {
+  const sections = analysisGroups
+    .map((group) => {
+      const items = groupedTasks[group.id];
+      if (!items.length) return null;
+      return [`【${group.label}】`, ...items.map((item) => `- ${item.title}`)].join("\n");
+    })
+    .filter(Boolean)
+    .join("\n\n");
+
+  return [
+    "Echly 解析結果",
+    "",
+    `負荷シグナル: ${condition.label}`,
+    condition.summary,
+    sections ? `\n${sections}` : "",
+  ].join("\n").trim();
+}
+
+export function AnalysisView({ transcript, audioBlob, audioMeta, tasks, condition, onBack, onCreatePlan, processingStage, error }: Props) {
   const score = scoreFor(condition.level);
+  const [shareFeedback, setShareFeedback] = useState<string | null>(null);
+  const [audioCurrentTime, setAudioCurrentTime] = useState(0);
+  const [audioDuration, setAudioDuration] = useState(audioMeta.durationSec || 0);
+  const [waveformHeights, setWaveformHeights] = useState<number[] | null>(null);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const audioProgressFrameRef = useRef<number | null>(null);
+  const audioUrl = useMemo(() => audioBlob ? URL.createObjectURL(audioBlob) : null, [audioBlob]);
+  const audioProgress = audioDuration > 0 ? Math.min(1, audioCurrentTime / audioDuration) : 0;
   const groupedTasks: Record<AnalysisGroup, ExtractedTask[]> = {
     reflection: [],
     tomorrow: [],
@@ -72,21 +140,163 @@ export function AnalysisView({ transcript, audioMeta, tasks, condition, onBack, 
   for (const task of tasks) {
     groupedTasks[analysisGroupFor(task)].push(task);
   }
+  const shareText = shareTextFor(condition, groupedTasks);
+
+  useEffect(() => () => {
+    if (audioUrl) URL.revokeObjectURL(audioUrl);
+    if (audioProgressFrameRef.current !== null) {
+      cancelAnimationFrame(audioProgressFrameRef.current);
+    }
+  }, [audioUrl]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    if (!audioBlob) return;
+
+    createWaveformHeights(audioBlob)
+      .then((heights) => {
+        if (!cancelled) setWaveformHeights(heights);
+      })
+      .catch(() => {
+        if (!cancelled) setWaveformHeights(null);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [audioBlob]);
+
+  async function handleShare() {
+    setShareFeedback(null);
+    try {
+      if (navigator.share) {
+        await navigator.share({
+          title: "Echly 解析結果",
+          text: shareText,
+        });
+        return;
+      }
+      await navigator.clipboard.writeText(shareText);
+      setShareFeedback("共有内容をコピーしました");
+    } catch (caught) {
+      if (caught instanceof DOMException && caught.name === "AbortError") return;
+      try {
+        await navigator.clipboard.writeText(shareText);
+        setShareFeedback("共有内容をコピーしました");
+      } catch {
+        setShareFeedback("共有できませんでした");
+      }
+    }
+  }
+
+  function syncAudioProgress() {
+    const audio = audioRef.current;
+    if (!audio) return;
+    setAudioCurrentTime(audio.currentTime);
+    if (Number.isFinite(audio.duration) && audio.duration > 0) {
+      setAudioDuration(audio.duration);
+    }
+  }
+
+  function stopSmoothAudioProgress() {
+    if (audioProgressFrameRef.current === null) return;
+    cancelAnimationFrame(audioProgressFrameRef.current);
+    audioProgressFrameRef.current = null;
+  }
+
+  function startSmoothAudioProgress() {
+    stopSmoothAudioProgress();
+    const tick = () => {
+      syncAudioProgress();
+      const audio = audioRef.current;
+      if (audio && !audio.paused && !audio.ended) {
+        audioProgressFrameRef.current = requestAnimationFrame(tick);
+      } else {
+        audioProgressFrameRef.current = null;
+      }
+    };
+    audioProgressFrameRef.current = requestAnimationFrame(tick);
+  }
+
+  function handleWaveSeek(event: React.PointerEvent<HTMLButtonElement>) {
+    const audio = audioRef.current;
+    if (!audio || !audioDuration) return;
+    const rect = event.currentTarget.getBoundingClientRect();
+    const ratio = Math.min(1, Math.max(0, (event.clientX - rect.left) / rect.width));
+    audio.currentTime = ratio * audioDuration;
+    setAudioCurrentTime(audio.currentTime);
+  }
+
   return (
     <div>
       <header className="grid h-16 grid-cols-[44px_1fr_44px] items-center border-b border-[#ececf3] px-3 pt-[env(safe-area-inset-top)]">
         <button type="button" onClick={onBack} aria-label="戻る" className="grid size-10 place-items-center text-[#303857]"><ArrowLeft size={20} /></button>
         <h1 className="text-center text-base font-bold">解析結果</h1>
-        <button type="button" aria-label="共有" className="grid size-10 place-items-center text-[#303857]"><Share2 size={19} /></button>
+        <button type="button" onClick={handleShare} aria-label="解析結果を共有" title="負荷シグナルと内容の整理を共有" className="grid size-10 place-items-center text-[#303857] active:scale-95"><Upload size={19} /></button>
       </header>
 
       <div className="space-y-3 px-4 pb-8 pt-3">
         {error ? <div role="alert" className="rounded-lg bg-[#fff4f5] p-3 text-sm text-[#b43d4d]">{error}</div> : null}
+        {shareFeedback ? <div role="status" className="rounded-lg bg-[#f1efff] px-3 py-2 text-xs font-medium text-[#5039ce]">{shareFeedback}</div> : null}
 
         <section className="rounded-lg border border-[#e3e5ef] p-4">
-          <h2 className="text-xs font-bold">音声の波形</h2>
-          <div className="analysis-wave mt-5" aria-hidden="true">{wave.map((height, index) => <span key={index} style={{ height }} />)}</div>
-          <div className="mt-4 flex justify-between text-[10px] text-[#737b99]"><span>00:00</span><span>{formatDuration(audioMeta.durationSec)}</span></div>
+          <div className="flex items-center justify-between gap-3">
+            <h2 className="text-xs font-bold">録音した音声</h2>
+            <span className="font-mono text-[10px] text-[#737b99]">{formatDuration(audioDuration || audioMeta.durationSec)}</span>
+          </div>
+          <button
+            type="button"
+            onPointerDown={handleWaveSeek}
+            disabled={!audioUrl}
+            className="relative mt-5 block h-[58px] w-full overflow-hidden rounded-md bg-[#f7f8fc] px-2 disabled:cursor-default"
+            aria-label="波形をタップして再生位置を移動"
+          >
+            {waveformHeights ? (
+              <div className="analysis-wave h-full" aria-hidden="true">
+                {waveformHeights.map((height, index) => <span key={index} style={{ height }} />)}
+              </div>
+            ) : (
+              <div className="grid h-full place-items-center text-xs font-medium text-[#737b99]">
+                {audioUrl ? "波形を生成中..." : "録音なし"}
+              </div>
+            )}
+            {audioUrl ? (
+              <>
+                <span
+                  className="pointer-events-none absolute inset-y-0 left-0 w-full origin-left transform-gpu bg-[#6047ff]/10"
+                  style={{ transform: `scaleX(${audioProgress})` }}
+                />
+                <span
+                  className="pointer-events-none absolute bottom-1 top-1 w-px transform-gpu rounded-full bg-[#111735] shadow-[0_0_0_2px_rgba(255,255,255,0.9)]"
+                  style={{ left: `${audioProgress * 100}%` }}
+                />
+              </>
+            ) : null}
+          </button>
+          {audioUrl ? <div className="mt-2 flex justify-between font-mono text-[10px] text-[#737b99]"><span>{formatDuration(Math.floor(audioCurrentTime))}</span><span>{formatDuration(Math.floor(audioDuration || audioMeta.durationSec))}</span></div> : null}
+          {audioUrl ? (
+            <audio
+              ref={audioRef}
+              controls
+              src={audioUrl}
+              onLoadedMetadata={syncAudioProgress}
+              onSeeking={syncAudioProgress}
+              onSeeked={syncAudioProgress}
+              onPlay={startSmoothAudioProgress}
+              onPause={() => {
+                stopSmoothAudioProgress();
+                syncAudioProgress();
+              }}
+              onEnded={() => {
+                stopSmoothAudioProgress();
+                syncAudioProgress();
+              }}
+              className="mt-4 h-9 w-full"
+            />
+          ) : (
+            <p className="mt-4 rounded-md bg-[#f7f8fc] px-3 py-2 text-xs text-[#68708f]">録音音声はありません。テキスト入力から解析した結果です。</p>
+          )}
         </section>
 
         <div className="grid gap-3 min-[380px]:grid-cols-2">
