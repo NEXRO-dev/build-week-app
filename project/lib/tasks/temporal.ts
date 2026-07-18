@@ -4,7 +4,6 @@ export function isTomorrowActionableTask(task: ExtractedTask) {
   return (
     task.temporalContext === "tomorrow" &&
     task.kind !== "topic" &&
-    task.status !== "completed" &&
-    task.status !== "cancelled"
+    (task.status === "pending" || task.status === "in_progress")
   );
 }

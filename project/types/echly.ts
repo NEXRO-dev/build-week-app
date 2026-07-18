@@ -13,6 +13,7 @@ export type Burden = "high" | "medium" | "low";
 export type Impact = "low" | "medium" | "high";
 export type EmailTone = "polite" | "casual" | "formal";
 export type ExtractedItemKind = "task" | "event" | "topic";
+export type TopicType = "reflection" | "concern" | "other";
 export type TemporalContext =
   | "past"
   | "today"
@@ -45,6 +46,7 @@ export type ExtractedTask = {
   id: string;
   title: string;
   kind: ExtractedItemKind;
+  topicType?: TopicType | null;
   temporalContext: TemporalContext;
   status: TaskStatus;
   type: TaskType;
@@ -126,7 +128,7 @@ export type CheckIn = {
   plan: TomorrowPlan;
   approvalStatus: ApprovalStatus;
   approvedActionIds: string[];
-  source: "openai" | "demo";
+  source: "cloudflare" | "openai" | "demo";
 };
 
 export type WorkspaceView =

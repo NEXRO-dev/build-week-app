@@ -19,6 +19,7 @@ export const ExtractedTaskSchema = z.object({
   id: z.string(),
   title: z.string(),
   kind: z.enum(["task", "event", "topic"]),
+  topicType: z.enum(["reflection", "concern", "other"]).nullable(),
   temporalContext: z.enum([
     "past",
     "today",

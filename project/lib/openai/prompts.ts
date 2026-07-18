@@ -6,6 +6,7 @@ export const ANALYSIS_SYSTEM_PROMPT = `
 2. 各項目が過去・今日・明日・それより先・時期不明のどれかを判定する。
 3. 完了済みの出来事を明日のタスクとして扱わない。
 4. 発話内容と音響情報から負荷シグナルを推定する。
+5. 今日の振り返り、今後の行動、悩み・気がかりを混同しない。
 
 時間判定の手順:
 - referenceDateとtimeZoneを基準に「昨日」「今日」「明日」「来週」、曜日、日付を解釈する。
@@ -16,11 +17,17 @@ export const ANALYSIS_SYSTEM_PROMPT = `
 - 「A社と会議した。議事録を送らないと」のように時期が明示されない未完了作業はunspecifiedにする。明日だと推測しない。
 - 「来週」「月末」「6月3日」など明日より後ならfutureにする。
 - 過去の出来事から新しいタスクを推測して作らない。発話に明示された行動だけを抽出する。
+- 「やった」「終えた」「済ませた」「参加した」は完了表現として扱い、別の未完了表現がない限りpendingにしない。
+- 一つの発話に今日の振り返りと明日の予定が混ざっていても、文や節ごとに時間と状態を判定する。
 
 項目の分類:
 - kind=task: 本人が実行する作業や連絡。
 - kind=event: 会議、面談、予約など時間枠を持つ予定。
 - kind=topic: 感想、懸念、体調、完了報告など、実行項目ではない話題。
+- topicType=reflection: 今日や過去についての感想、振り返り、完了報告。
+- topicType=concern: 不安、悩み、迷い、気がかり。行動が明示されていなければtaskにしない。
+- topicType=other: reflectionにもconcernにも当たらない単なる話題。
+- kindがtaskまたはeventならtopicType=nullにする。kind=topicならtopicTypeを必ず設定する。
 - statusは completed / in_progress / pending / cancelled / unknown のいずれかにする。
 - 疲労や睡眠不足の表現は負荷シグナルの根拠であり、タスクにはしない。
 
@@ -31,7 +38,13 @@ export const ANALYSIS_SYSTEM_PROMPT = `
 - 本人が動かせる可能性が低い予定はmovable=falseにする。
 - 医学的な診断や病名の推測はしない。
 - disclaimerには「診断ではなく、音声と発話内容からの推定です」を含める。
+- idは項目ごとに重複しない短い文字列にする。
 - すべて日本語で返す。
+
+出力前の確認:
+- completedの項目がtomorrowの実行候補に紛れていないか確認する。
+- 発話にないタスクを推測で追加していないか確認する。
+- 悩みそのものをtaskにしていないか確認する。
 
 判定例:
 - 「今日、資料を提出した」→ kind=task, temporalContext=today, status=completed
@@ -39,6 +52,7 @@ export const ANALYSIS_SYSTEM_PROMPT = `
 - 「明日は資料を仕上げる」→ kind=task, temporalContext=tomorrow, status=pending
 - 「来週、田中さんに連絡する」→ kind=task, temporalContext=future, status=pending
 - 「会議が多くて疲れた」→ 会議の完了報告またはtopic。明日の予定にはしない
+- 「今日は資料を仕上げた。明日は顧客に送る。反応が少し不安」→ 今日の完了済みtask、明日のpending task、concernのtopicとして3件に分ける
 `.trim();
 
 export const PLAN_SYSTEM_PROMPT = `

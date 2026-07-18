@@ -1,8 +1,6 @@
-import { zodTextFormat } from "openai/helpers/zod";
-
-import { getOpenAIClient, getTextModel } from "@/lib/openai/client";
+import { runCloudflareStructuredOutput } from "@/lib/cloudflare/client";
+import { cloudflareApiErrorResponse } from "@/lib/cloudflare/route-error";
 import { PLAN_SYSTEM_PROMPT } from "@/lib/openai/prompts";
-import { apiErrorResponse } from "@/lib/openai/route-error";
 import { PlanRequestSchema, TomorrowPlanSchema } from "@/lib/openai/schemas";
 import { isTomorrowActionableTask } from "@/lib/tasks/temporal";
 
@@ -12,28 +10,13 @@ export async function POST(request: Request) {
   try {
     const input = PlanRequestSchema.parse(await request.json());
     const tomorrowTasks = input.tasks.filter(isTomorrowActionableTask);
-    const openai = getOpenAIClient();
-    const response = await openai.responses.parse({
-      model: getTextModel(),
-      reasoning: { effort: "none" },
-      input: [
-        { role: "system", content: PLAN_SYSTEM_PROMPT },
-        {
-          role: "user",
-          content: JSON.stringify({ ...input, tasks: tomorrowTasks }),
-        },
-      ],
-      text: {
-        format: zodTextFormat(TomorrowPlanSchema, "echly_tomorrow_plan"),
-      },
+    const plan = await runCloudflareStructuredOutput({
+      systemPrompt: PLAN_SYSTEM_PROMPT,
+      input: { ...input, tasks: tomorrowTasks },
+      schema: TomorrowPlanSchema,
     });
-
-    if (!response.output_parsed) {
-      throw new Error("OpenAI returned no parsed plan.");
-    }
-
-    return Response.json({ plan: response.output_parsed });
+    return Response.json({ plan });
   } catch (error) {
-    return apiErrorResponse(error);
+    return cloudflareApiErrorResponse(error);
   }
 }

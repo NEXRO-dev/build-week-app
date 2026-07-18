@@ -47,8 +47,8 @@ class ApiClientError extends Error {
 function canUseDemoFallback(error: unknown) {
   return (
     error instanceof ApiClientError &&
-    (error.code === "OPENAI_API_KEY_MISSING" ||
-      error.code === "OPENAI_QUOTA_EXCEEDED")
+    (error.code === "CLOUDFLARE_CONFIG_MISSING" ||
+      error.code === "CLOUDFLARE_LIMIT_REACHED")
   );
 }
 
@@ -79,7 +79,7 @@ export function EchlyApp({ todayLabel }: EchlyAppProps) {
   const [audioMeta, setAudioMeta] = useState<AudioMeta>(EMPTY_AUDIO_META);
   const [analysis, setAnalysis] = useState<AnalysisResult | null>(null);
   const [plan, setPlan] = useState<TomorrowPlan | null>(null);
-  const [source, setSource] = useState<"openai" | "demo">("demo");
+  const [source, setSource] = useState<"cloudflare" | "demo">("demo");
   const [processingStage, setProcessingStage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [appliedActionIds, setAppliedActionIds] = useState<string[]>([]);
@@ -164,7 +164,7 @@ export function EchlyApp({ todayLabel }: EchlyAppProps) {
               "現在、音声を文字起こしできません。「テキストで入力」から内容を入力すると、デモ解析を利用できます。",
               transcribeError instanceof ApiClientError
                 ? transcribeError.code
-                : "OPENAI_REQUEST_FAILED",
+                : "CLOUDFLARE_REQUEST_FAILED",
             );
           } else {
             throw transcribeError;
@@ -218,7 +218,7 @@ export function EchlyApp({ todayLabel }: EchlyAppProps) {
       setAnalysis(result);
       setPlan(null);
       setAppliedActionIds([]);
-      setSource(useDemo ? "demo" : "openai");
+      setSource(useDemo ? "demo" : "cloudflare");
       setView("analysis");
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "チェックインを解析できませんでした。");

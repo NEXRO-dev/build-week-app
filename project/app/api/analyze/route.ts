@@ -1,8 +1,6 @@
-import { zodTextFormat } from "openai/helpers/zod";
-
-import { getOpenAIClient, getTextModel } from "@/lib/openai/client";
+import { runCloudflareStructuredOutput } from "@/lib/cloudflare/client";
+import { cloudflareApiErrorResponse } from "@/lib/cloudflare/route-error";
 import { ANALYSIS_SYSTEM_PROMPT } from "@/lib/openai/prompts";
-import { apiErrorResponse } from "@/lib/openai/route-error";
 import {
   AnalysisResultSchema,
   AnalyzeRequestSchema,
@@ -13,28 +11,13 @@ export const runtime = "nodejs";
 export async function POST(request: Request) {
   try {
     const input = AnalyzeRequestSchema.parse(await request.json());
-    const openai = getOpenAIClient();
-    const response = await openai.responses.parse({
-      model: getTextModel(),
-      reasoning: { effort: "none" },
-      input: [
-        { role: "system", content: ANALYSIS_SYSTEM_PROMPT },
-        {
-          role: "user",
-          content: JSON.stringify(input),
-        },
-      ],
-      text: {
-        format: zodTextFormat(AnalysisResultSchema, "echly_analysis"),
-      },
+    const result = await runCloudflareStructuredOutput({
+      systemPrompt: ANALYSIS_SYSTEM_PROMPT,
+      input,
+      schema: AnalysisResultSchema,
     });
-
-    if (!response.output_parsed) {
-      throw new Error("OpenAI returned no parsed analysis.");
-    }
-
-    return Response.json(response.output_parsed);
+    return Response.json(result);
   } catch (error) {
-    return apiErrorResponse(error);
+    return cloudflareApiErrorResponse(error);
   }
 }

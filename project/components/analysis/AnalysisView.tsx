@@ -4,13 +4,14 @@ import { Button } from "@heroui/react";
 import { ArrowLeft, ArrowRight, CalendarDays, LoaderCircle, Share2 } from "lucide-react";
 
 import type { AudioMeta, ConditionLevel, ExtractedTask, TaskType } from "@/types/echly";
+import { isTomorrowActionableTask } from "@/lib/tasks/temporal";
 
 type Props = {
   transcript: string;
   audioMeta: AudioMeta;
   tasks: ExtractedTask[];
   condition: { level: ConditionLevel; label: string; summary: string; evidence: string[]; disclaimer: string };
-  source: "openai" | "demo";
+  source: "cloudflare" | "demo";
   onBack: () => void;
   onCreatePlan: () => void;
   processingStage: string | null;
@@ -34,6 +35,24 @@ const temporalStyles = {
   future: "bg-[#eefaf6] text-[#25785f]",
   unspecified: "bg-[#fff6e9] text-[#a96817]",
 } as const;
+type AnalysisGroup = "reflection" | "tomorrow" | "concern" | "other";
+
+const analysisGroups = [
+  { id: "reflection", label: "今日のふり返り", style: "bg-[#edf4ff] text-[#315caa]" },
+  { id: "tomorrow", label: "明日の予定・タスク", style: "bg-[#eeeaff] text-[#543bd2]" },
+  { id: "concern", label: "悩み・気がかり", style: "bg-[#fff0f4] text-[#c83b64]" },
+  { id: "other", label: "今後・時期未定", style: "bg-[#eefaf6] text-[#25785f]" },
+] as const;
+
+function analysisGroupFor(task: ExtractedTask): AnalysisGroup {
+  if (task.kind === "topic" && task.topicType === "concern") return "concern";
+  if (isTomorrowActionableTask(task)) return "tomorrow";
+  if (
+    task.topicType === "reflection" || task.status === "completed" ||
+    task.temporalContext === "past" || task.temporalContext === "today"
+  ) return "reflection";
+  return "other";
+}
 const wave = [12,20,35,26,45,22,31,48,25,17,39,52,28,44,21,35,59,27,18,45,33,54,24,38,17,30,48,20,35,14,28,42,19,31,12];
 
 function scoreFor(level: ConditionLevel) { return level === "high" ? 72 : level === "caution" ? 58 : 34; }
@@ -44,6 +63,15 @@ function formatDuration(seconds: number) {
 
 export function AnalysisView({ transcript, audioMeta, tasks, condition, onBack, onCreatePlan, processingStage, error }: Props) {
   const score = scoreFor(condition.level);
+  const groupedTasks: Record<AnalysisGroup, ExtractedTask[]> = {
+    reflection: [],
+    tomorrow: [],
+    concern: [],
+    other: [],
+  };
+  for (const task of tasks) {
+    groupedTasks[analysisGroupFor(task)].push(task);
+  }
   return (
     <div>
       <header className="grid h-16 grid-cols-[44px_1fr_44px] items-center border-b border-[#ececf3] px-3 pt-[env(safe-area-inset-top)]">
@@ -82,16 +110,31 @@ export function AnalysisView({ transcript, audioMeta, tasks, condition, onBack, 
         </div>
 
         <section className="rounded-lg border border-[#e3e5ef] p-4">
-          <h2 className="text-xs font-bold">抽出されたタスク・トピック</h2>
-          <div className="mt-3 flex flex-wrap gap-2">
-            {tasks.map((task) => (
-              <span key={task.id} className="inline-flex max-w-full min-w-0 items-center gap-1.5 rounded-md border border-[#dfe2ec] bg-white px-2 py-1.5 text-xs font-medium text-[#343c5b]">
-                <span className={`shrink-0 rounded px-1.5 py-0.5 text-[9px] font-bold ${temporalStyles[task.temporalContext]}`}>{temporalLabels[task.temporalContext]}</span>
-                {task.startTime ? <CalendarDays size={12} className="shrink-0" /> : null}
-                <span className={`min-w-0 break-words ${task.status === "completed" ? "line-through opacity-60" : ""}`}>{task.title}</span>
-                <span className="shrink-0 text-[9px] text-[#8188a1]">{task.kind === "topic" ? "話題" : taskTypeLabels[task.type]}</span>
-              </span>
-            ))}
+          <h2 className="text-xs font-bold">内容の整理</h2>
+          <div className="mt-4 space-y-4">
+            {analysisGroups.map((group) => {
+              const items = groupedTasks[group.id];
+              if (!items.length) return null;
+              return (
+                <div key={group.id}>
+                  <div className="mb-2 flex items-center gap-2">
+                    <h3 className={`rounded px-2 py-1 text-[10px] font-bold ${group.style}`}>{group.label}</h3>
+                    <span className="text-[10px] text-[#8188a1]">{items.length}件</span>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    {items.map((task) => (
+                      <span key={task.id} className="inline-flex max-w-full min-w-0 items-center gap-1.5 rounded-md border border-[#dfe2ec] bg-white px-2 py-1.5 text-xs font-medium text-[#343c5b]">
+                        <span className={`shrink-0 rounded px-1.5 py-0.5 text-[9px] font-bold ${temporalStyles[task.temporalContext]}`}>{temporalLabels[task.temporalContext]}</span>
+                        {task.startTime ? <CalendarDays size={12} className="shrink-0" /> : null}
+                        <span className={`min-w-0 break-words ${task.status === "completed" ? "line-through opacity-60" : ""}`}>{task.title}</span>
+                        <span className="shrink-0 text-[9px] text-[#8188a1]">{task.kind === "topic" ? "話題" : taskTypeLabels[task.type]}</span>
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              );
+            })}
+            {!tasks.length ? <p className="text-xs text-[#737b99]">整理できる項目はありませんでした。</p> : null}
           </div>
         </section>
 
