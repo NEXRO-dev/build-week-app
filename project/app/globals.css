@@ -1,0 +1,178 @@
+@import "tailwindcss";
+@import "@heroui/styles";
+
+:root {
+  --background: #eef2f0;
+  --foreground: #18201f;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-geist-sans), "Hiragino Sans", "Yu Gothic UI", "Yu Gothic", sans-serif;
+  letter-spacing: 0;
+  margin: 0;
+  min-width: 320px;
+  overscroll-behavior-y: none;
+}
+
+button,
+input,
+textarea,
+select {
+  font: inherit;
+  letter-spacing: 0;
+}
+
+button:not(:disabled) {
+  cursor: pointer;
+}
+
+::selection {
+  background: #c7ded8;
+  color: #183c37;
+}
+
+.echly-mark {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  height: 22px;
+}
+
+.echly-mark i {
+  display: block;
+  width: 3px;
+  border-radius: 99px;
+  background: currentColor;
+}
+
+.echly-mark i:nth-child(1) {
+  height: 9px;
+}
+
+.echly-mark i:nth-child(2) {
+  height: 20px;
+}
+
+.echly-mark i:nth-child(3) {
+  height: 13px;
+}
+
+.waveform {
+  display: flex;
+  width: min(100%, 420px);
+  height: 58px;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+}
+
+.waveform span {
+  width: 3px;
+  min-height: 6px;
+  border-radius: 99px;
+  background: #a8bbb6;
+  transform-origin: center;
+  transition:
+    height 220ms ease,
+    background-color 220ms ease;
+}
+
+.waveform.is-recording span {
+  animation: waveform-pulse 1.15s ease-in-out infinite alternate;
+  background: #2b7567;
+}
+
+.waveform.is-recording span:nth-child(3n) {
+  animation-delay: 120ms;
+}
+
+.waveform.is-recording span:nth-child(4n) {
+  animation-delay: 260ms;
+}
+
+.record-pulse {
+  animation: record-ring 1.6s ease-out infinite;
+}
+
+.condition-gauge {
+  position: relative;
+  height: 8px;
+  overflow: hidden;
+  border-radius: 99px;
+  background: #e6eae8;
+}
+
+.condition-gauge span {
+  display: block;
+  height: 100%;
+  width: 28%;
+  border-radius: inherit;
+  background: #4f8b7e;
+}
+
+.condition-gauge[data-level="caution"] span {
+  width: 60%;
+  background: #d0a049;
+}
+
+.condition-gauge[data-level="high"] span {
+  width: 88%;
+  background: #c8765e;
+}
+
+@keyframes waveform-pulse {
+  from {
+    transform: scaleY(0.72);
+    opacity: 0.76;
+  }
+  to {
+    transform: scaleY(1.06);
+    opacity: 1;
+  }
+}
+
+@keyframes record-ring {
+  0% {
+    box-shadow: 0 0 0 0 rgba(187, 74, 57, 0.28);
+  }
+  70% {
+    box-shadow: 0 0 0 14px rgba(187, 74, 57, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(187, 74, 57, 0);
+  }
+}
+
+@media (display-mode: standalone) {
+  body {
+    -webkit-user-select: none;
+    user-select: none;
+  }
+
+  input,
+  textarea,
+  select {
+    -webkit-user-select: text;
+    user-select: text;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
