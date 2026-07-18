@@ -1,15 +1,15 @@
 "use client";
 
 import { Button, Label, TextArea, TextField } from "@heroui/react";
-import { Activity, Bell, CalendarCheck, Check, FlaskConical, LoaderCircle, MessageSquareText } from "lucide-react";
+import { Activity, ArrowLeft, Bell, CalendarCheck, Check, FlaskConical, LoaderCircle, MessageSquareText } from "lucide-react";
 import { useState } from "react";
 
 import { SAMPLE_TRANSCRIPT } from "@/lib/demo/sampleCheckIns";
-import type { AudioMeta } from "@/types/echly";
+import type { AudioMeta, ConditionSignal, WorkloadSelfReport } from "@/types/echly";
 
 import { RecorderPanel } from "./RecorderPanel";
 
-type CheckInStep = 1 | 2;
+export type CheckInStep = 1 | 2;
 type StepTone = "reflection" | "planning";
 
 const stepContent: Record<CheckInStep, {
@@ -47,14 +47,93 @@ const stepContent: Record<CheckInStep, {
   },
 };
 
+type AssessmentQuestion = {
+  key: keyof WorkloadSelfReport;
+  eyebrow: string;
+  question: string;
+  options: Array<{ label: string; value: number }>;
+};
+
+const workloadOptions = [
+  { label: "ほとんどない", value: 0 },
+  { label: "少ない", value: 25 },
+  { label: "普通", value: 50 },
+  { label: "多い", value: 75 },
+  { label: "かなり多い", value: 100 },
+];
+
+const assessmentQuestions: AssessmentQuestion[] = [
+  {
+    key: "mentalDemand",
+    eyebrow: "精神的な要求",
+    question: "今日は、考えたり集中したりする負担がどのくらいありましたか？",
+    options: workloadOptions,
+  },
+  {
+    key: "physicalDemand",
+    eyebrow: "身体的な要求",
+    question: "今日は、体を使う負担がどのくらいありましたか？",
+    options: workloadOptions,
+  },
+  {
+    key: "temporalDemand",
+    eyebrow: "時間的な切迫",
+    question: "今日は、時間に追われる感覚がどのくらいありましたか？",
+    options: workloadOptions,
+  },
+  {
+    key: "performance",
+    eyebrow: "達成度への不満",
+    question: "今日の出来に対する不満はどのくらいありますか？",
+    options: [
+      { label: "満足している", value: 0 },
+      { label: "やや満足", value: 25 },
+      { label: "どちらでもない", value: 50 },
+      { label: "やや不満", value: 75 },
+      { label: "とても不満", value: 100 },
+    ],
+  },
+  {
+    key: "effort",
+    eyebrow: "必要だった努力",
+    question: "今日を乗り切るために、どのくらい努力が必要でしたか？",
+    options: workloadOptions,
+  },
+  {
+    key: "frustration",
+    eyebrow: "不安・いらだち",
+    question: "今日は、不安やいらだちをどのくらい感じましたか？",
+    options: workloadOptions,
+  },
+  {
+    key: "sleepiness",
+    eyebrow: "現在の眠気",
+    question: "今の眠気に最も近いものはどれですか？",
+    options: [
+      { label: "非常にはっきり目覚めている", value: 1 },
+      { label: "とても目覚めている", value: 2 },
+      { label: "目覚めている", value: 3 },
+      { label: "やや目覚めている", value: 4 },
+      { label: "どちらでもない", value: 5 },
+      { label: "少し眠い", value: 6 },
+      { label: "眠いが、起きていられる", value: 7 },
+      { label: "眠くて、起きているのがつらい", value: 8 },
+      { label: "とても眠く、起きているのが困難", value: 9 },
+    ],
+  },
+];
+
 type CheckInViewProps = {
   todayLabel: string;
+  previousCondition: ConditionSignal | null;
   transcript: string;
   onTranscriptChange: (value: string) => void;
-  audioBlob: Blob | null;
-  onAudioReady: (blob: Blob, meta: AudioMeta) => void;
-  onAudioDiscard: () => void;
-  onAnalyze: () => void;
+  audioByStep: Record<CheckInStep, Blob | null>;
+  onAudioReady: (step: CheckInStep, blob: Blob, meta: AudioMeta) => void;
+  onAudioDiscard: (step: CheckInStep) => void;
+  selfReport: Partial<WorkloadSelfReport>;
+  onSelfReportChange: (key: keyof WorkloadSelfReport, value: number) => void;
+  onAnalyze: (completedReport?: WorkloadSelfReport) => void;
   onError: (message: string) => void;
   processingStage: string | null;
   error: string | null;
@@ -62,25 +141,47 @@ type CheckInViewProps = {
 
 export function CheckInView(props: CheckInViewProps) {
   const {
-    todayLabel, transcript, onTranscriptChange, audioBlob, onAudioReady,
-    onAudioDiscard, onAnalyze, onError, processingStage, error,
+    todayLabel, previousCondition, transcript, onTranscriptChange, audioByStep, onAudioReady,
+    onAudioDiscard, selfReport, onSelfReportChange, onAnalyze, onError,
+    processingStage, error,
   } = props;
   const [activeStep, setActiveStep] = useState<CheckInStep>(1);
-  const [completedSteps, setCompletedSteps] = useState<CheckInStep[]>([]);
+  const [assessmentOpen, setAssessmentOpen] = useState(false);
+  const [assessmentIndex, setAssessmentIndex] = useState(0);
   const currentStep = stepContent[activeStep];
   const CurrentIcon = currentStep.icon;
-
-  function markStepComplete(step: CheckInStep) {
-    setCompletedSteps((current) => current.includes(step) ? current : [...current, step]);
-  }
+  const currentAudioBlob = audioByStep[activeStep];
+  const assessmentQuestion = assessmentQuestions[assessmentIndex];
+  const completedSteps = ([1, 2] as const).filter((step) => Boolean(audioByStep[step]));
 
   function handlePrimaryRecordingAction() {
-    markStepComplete(activeStep);
     if (activeStep === 1) {
       setActiveStep(2);
       return;
     }
-    onAnalyze();
+    startAssessment();
+  }
+
+  function startAssessment() {
+    const firstUnanswered = assessmentQuestions.findIndex(
+      (question) => !Number.isFinite(selfReport[question.key]),
+    );
+    setAssessmentIndex(firstUnanswered >= 0 ? firstUnanswered : 0);
+    setAssessmentOpen(true);
+  }
+
+  function answerAssessment(question: AssessmentQuestion, value: number) {
+    const nextReport = { ...selfReport, [question.key]: value };
+    onSelfReportChange(question.key, value);
+
+    if (assessmentIndex < assessmentQuestions.length - 1) {
+      setAssessmentIndex((current) => current + 1);
+      return;
+    }
+
+    if (Object.values(nextReport).filter(Number.isFinite).length === 7) {
+      onAnalyze(nextReport as WorkloadSelfReport);
+    }
   }
 
   function selectStep(step: CheckInStep) {
@@ -109,7 +210,9 @@ export function CheckInView(props: CheckInViewProps) {
           </span>
           <div className="min-w-0">
             <p className="text-xs font-medium text-[#626b89]">前回の状態</p>
-            <p className="mt-1 text-sm font-bold">通常よりやや高い</p>
+            <p className="mt-1 text-sm font-bold">
+              {previousCondition?.score !== undefined ? `${previousCondition.score}/100・${previousCondition.label}` : "まだ記録がありません"}
+            </p>
           </div>
         </section>
 
@@ -191,17 +294,21 @@ export function CheckInView(props: CheckInViewProps) {
         </section>
 
         <RecorderPanel
-          audioBlob={audioBlob}
-          onAudioReady={onAudioReady}
-          onDiscard={onAudioDiscard}
+          audioBlob={currentAudioBlob}
+          onAudioReady={(blob, meta) => onAudioReady(activeStep, blob, meta)}
+          onDiscard={() => onAudioDiscard(activeStep)}
           onError={onError}
           onPrimaryAction={handlePrimaryRecordingAction}
           isProcessing={Boolean(processingStage)}
           idleLabel={`${currentStep.title}を録音`}
           recordingLabel="録音中"
           recordedLabel={`${currentStep.title}を録音できました`}
+          isPrimaryDisabled={
+            activeStep === 2 &&
+            (!audioByStep[1] || !audioByStep[2])
+          }
           durationHint={activeStep === 1 ? "目安：30秒〜1分" : "目安：30秒〜2分"}
-          primaryActionLabel={activeStep === 1 ? "Step2へ" : "解析する"}
+          primaryActionLabel={activeStep === 1 ? "Step2へ" : "自己評価へ"}
           tone={currentStep.tone}
         />
 
@@ -216,7 +323,7 @@ export function CheckInView(props: CheckInViewProps) {
             </TextField>
             <div className="mt-2 flex flex-wrap gap-2">
               <Button size="sm" variant="ghost" onPress={() => onTranscriptChange(SAMPLE_TRANSCRIPT)} className="min-w-0">デモ文を入力</Button>
-              <Button size="sm" variant="primary" isDisabled={!transcript.trim() || Boolean(processingStage)} onPress={onAnalyze} className="ml-auto min-w-20 bg-[#5b42ff] text-white">解析する</Button>
+              <Button size="sm" variant="primary" isDisabled={!transcript.trim() || Boolean(processingStage)} onPress={startAssessment} className="ml-auto min-w-20 bg-[#5b42ff] text-white">自己評価へ</Button>
             </div>
           </div>
         </details>
@@ -226,6 +333,78 @@ export function CheckInView(props: CheckInViewProps) {
           <p className="mt-1 text-xs leading-5 text-[#505975]">うまく話そうとしなくて大丈夫。思ったまま話してください。</p>
         </aside>
       </div>
+
+      {assessmentOpen ? (
+        <div className="fixed inset-0 z-[80] overflow-y-auto bg-[#f5f6fa]">
+          <div className="mx-auto flex min-h-dvh w-full max-w-md flex-col bg-white px-5 pb-[calc(24px+env(safe-area-inset-bottom))] pt-[env(safe-area-inset-top)] shadow-[0_0_36px_rgba(28,35,70,0.08)]">
+            <header className="grid h-16 grid-cols-[44px_1fr_44px] items-center">
+              <button
+                type="button"
+                aria-label={assessmentIndex === 0 ? "自己評価を閉じる" : "前の質問に戻る"}
+                onClick={() => {
+                  if (processingStage) return;
+                  if (assessmentIndex === 0) setAssessmentOpen(false);
+                  else setAssessmentIndex((current) => current - 1);
+                }}
+                className="grid size-11 place-items-center text-[#303857] disabled:opacity-40"
+                disabled={Boolean(processingStage)}
+              >
+                <ArrowLeft size={21} />
+              </button>
+              <p className="text-center text-sm font-bold text-[#303857]">今日の負荷を確認</p>
+            </header>
+
+            <div className="mt-3 flex gap-1.5" aria-hidden="true">
+              {assessmentQuestions.map((question, index) => (
+                <span key={question.key} className="h-1.5 flex-1 overflow-hidden rounded-full bg-[#e8eaf2]">
+                  <span className={`block h-full rounded-full bg-[#5b42ff] transition-transform duration-200 ${index <= assessmentIndex ? "translate-x-0" : "-translate-x-full"}`} />
+                </span>
+              ))}
+            </div>
+
+            {processingStage ? (
+              <div className="flex flex-1 flex-col items-center justify-center py-16 text-center">
+                <span className="grid size-20 place-items-center rounded-full bg-[#efedff] text-[#5b42ff]">
+                  <LoaderCircle size={34} className="animate-spin" />
+                </span>
+                <h2 className="mt-6 text-xl font-bold text-[#111735]">回答をもとに解析中</h2>
+                <p className="mt-2 text-sm text-[#68708f]">{processingStage}</p>
+              </div>
+            ) : (
+              <main className="flex flex-1 flex-col py-7">
+                <div className="flex items-center justify-between gap-3">
+                  <p className="text-xs font-bold text-[#5b42ff]">{assessmentQuestion.eyebrow}</p>
+                  <p className="text-xs font-bold tabular-nums text-[#7b829c]">{assessmentIndex + 1} / {assessmentQuestions.length}</p>
+                </div>
+                <h1 className="mt-5 text-[24px] font-bold leading-9 text-[#111735]">{assessmentQuestion.question}</h1>
+                <div
+                  className={`mt-8 grid ${assessmentQuestion.key === "sleepiness" ? "gap-1.5 pb-2" : "my-auto gap-2.5"}`}
+                  role="group"
+                  aria-label={assessmentQuestion.question}
+                >
+                  {assessmentQuestion.options.map((option) => {
+                    const selected = selfReport[assessmentQuestion.key] === option.value;
+                    return (
+                      <button
+                        key={option.value}
+                        type="button"
+                        onClick={() => answerAssessment(assessmentQuestion, option.value)}
+                        className={`flex w-full items-center justify-between gap-3 rounded-lg border px-4 text-left font-semibold transition-[background-color,border-color,transform] active:scale-[0.98] ${assessmentQuestion.key === "sleepiness" ? "min-h-11 py-2 text-xs" : "min-h-[52px] py-3 text-sm"} ${selected ? "border-[#5b42ff] bg-[#f3f1ff] text-[#3f2bc7]" : "border-[#dfe2ec] bg-white text-[#303857]"}`}
+                        aria-pressed={selected}
+                      >
+                        <span>{option.label}</span>
+                        {selected ? <Check size={18} className="shrink-0" /> : null}
+                      </button>
+                    );
+                  })}
+                </div>
+              </main>
+            )}
+
+            {error ? <div role="alert" className="mb-2 rounded-lg bg-[#fff4f5] p-3 text-xs leading-5 text-[#b43d4d]">{error}</div> : null}
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

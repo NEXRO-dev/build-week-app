@@ -34,11 +34,39 @@ export type AudioMeta = {
   speechRate: number | null;
 };
 
+export type WorkloadSelfReport = {
+  mentalDemand: number;
+  physicalDemand: number;
+  temporalDemand: number;
+  performance: number;
+  effort: number;
+  frustration: number;
+  sleepiness: number;
+};
+
+export type LoadSignalComponents = {
+  selfReport: WorkloadSelfReport;
+  rawTlx: number;
+  sleepiness: number;
+  voiceDeviation: number | null;
+  voiceBaselineCount: number;
+  workloadWeight: number;
+  sleepinessWeight: number;
+  voiceWeight: number;
+};
+
+export type LoadSignalConfidence = "standard" | "limited";
+export type LoadSignalMethod = "echly-load-v1";
+
 export type ConditionSignal = {
   level: ConditionLevel;
   label: string;
   summary: string;
   evidence: string[];
+  score?: number;
+  confidence?: LoadSignalConfidence;
+  components?: LoadSignalComponents;
+  methodVersion?: LoadSignalMethod;
   disclaimer: string;
 };
 

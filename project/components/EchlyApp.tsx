@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 
 import { AnalysisView } from "@/components/analysis/AnalysisView";
 import { ApprovalView } from "@/components/approval/ApprovalView";
-import { CheckInView } from "@/components/check-in/CheckInView";
+import { CheckInView, type CheckInStep } from "@/components/check-in/CheckInView";
 import { HistoryView } from "@/components/history/HistoryView";
 import { AppShell } from "@/components/layout/AppShell";
 import { EmptyWorkspaceView } from "@/components/layout/EmptyWorkspaceView";
@@ -17,11 +17,16 @@ import {
   getSampleHistory,
 } from "@/lib/demo/sampleCheckIns";
 import { isTomorrowActionableTask } from "@/lib/tasks/temporal";
+import {
+  calculateLoadSignal,
+  isCompleteWorkloadSelfReport,
+} from "@/lib/load/calculateLoadSignal";
 import type {
   AnalysisResult,
   AudioMeta,
   CheckIn,
   TomorrowPlan,
+  WorkloadSelfReport,
   WorkspaceView,
 } from "@/types/echly";
 
@@ -68,14 +73,75 @@ function newId() {
     : `checkin-${Date.now()}`;
 }
 
+type StepAudio = {
+  blob: Blob | null;
+  meta: AudioMeta;
+};
+
+type StepAudioState = Record<CheckInStep, StepAudio>;
+
+const CHECK_IN_STEPS = [1, 2] as const;
+const STEP_TRANSCRIPT_LABELS: Record<CheckInStep, string> = {
+  1: "【STEP 1: 今日の振り返り】",
+  2: "【STEP 2: 明日の予定・タスク】",
+};
+
+function createEmptyStepAudioState(): StepAudioState {
+  return {
+    1: { blob: null, meta: { ...EMPTY_AUDIO_META } },
+    2: { blob: null, meta: { ...EMPTY_AUDIO_META } },
+  };
+}
+
+function aggregateAudioMeta(
+  audioByStep: StepAudioState,
+  spokenCharacterCount: number,
+): AudioMeta {
+  const recordings = CHECK_IN_STEPS
+    .map((step) => audioByStep[step])
+    .filter((recording) => recording.blob);
+  const durationSec = recordings.reduce(
+    (total, recording) => total + recording.meta.durationSec,
+    0,
+  );
+
+  function weightedAverage(key: "averageVolume" | "silenceRatio") {
+    const measured = recordings.filter((recording) => recording.meta[key] !== null);
+    const weight = measured.reduce(
+      (total, recording) => total + Math.max(recording.meta.durationSec, 1),
+      0,
+    );
+    if (!weight) return null;
+    const value = measured.reduce(
+      (total, recording) =>
+        total + (recording.meta[key] ?? 0) * Math.max(recording.meta.durationSec, 1),
+      0,
+    );
+    return Number((value / weight).toFixed(3));
+  }
+
+  return {
+    durationSec,
+    averageVolume: weightedAverage("averageVolume"),
+    silenceRatio: weightedAverage("silenceRatio"),
+    speechRate:
+      durationSec > 0 && spokenCharacterCount > 0
+        ? Number((spokenCharacterCount / durationSec).toFixed(2))
+        : null,
+  };
+}
+
 type EchlyAppProps = {
   todayLabel: string;
 };
 
 export function EchlyApp({ todayLabel }: EchlyAppProps) {
   const [view, setView] = useState<WorkspaceView>("checkin");
+  const [draftTranscript, setDraftTranscript] = useState("");
   const [transcript, setTranscript] = useState("");
-  const [audioBlob, setAudioBlob] = useState<Blob | null>(null);
+  const [audioByStep, setAudioByStep] = useState<StepAudioState>(createEmptyStepAudioState);
+  const [selfReport, setSelfReport] =
+    useState<Partial<WorkloadSelfReport>>({});
   const [audioMeta, setAudioMeta] = useState<AudioMeta>(EMPTY_AUDIO_META);
   const [analysis, setAnalysis] = useState<AnalysisResult | null>(null);
   const [plan, setPlan] = useState<TomorrowPlan | null>(null);
@@ -123,39 +189,78 @@ export function EchlyApp({ todayLabel }: EchlyAppProps) {
     );
   }, [plan]);
 
-  function handleAudioReady(blob: Blob, meta: AudioMeta) {
-    setAudioBlob(blob);
-    setAudioMeta(meta);
+  function handleAudioReady(step: CheckInStep, blob: Blob, meta: AudioMeta) {
+    setAudioByStep((current) => ({
+      ...current,
+      [step]: { blob, meta },
+    }));
     setError(null);
   }
 
-  function handleAudioDiscard() {
-    setAudioBlob(null);
-    setAudioMeta(EMPTY_AUDIO_META);
+  function handleAudioDiscard(step: CheckInStep) {
+    setAudioByStep((current) => ({
+      ...current,
+      [step]: { blob: null, meta: { ...EMPTY_AUDIO_META } },
+    }));
   }
 
-  async function handleAnalyze() {
+  async function transcribeRecording(step: CheckInStep, audioBlob: Blob) {
+    const formData = new FormData();
+    const extension = audioBlob.type.includes("mp4") ? "m4a" : "webm";
+    formData.append("audio", audioBlob, `echly-step-${step}.${extension}`);
+    formData.append("context", step === 1 ? "reflection" : "planning");
+    const response = await fetch("/api/transcribe", { method: "POST", body: formData });
+    const result = await parseApiResponse<{ transcript: string }>(response);
+    return { step, transcript: result.transcript };
+  }
+
+  async function handleAnalyze(completedReport?: WorkloadSelfReport) {
+    const report = completedReport ?? selfReport;
+    if (!isCompleteWorkloadSelfReport(report)) {
+      setError("負荷の自己評価7項目に回答してください。");
+      return;
+    }
+
+    const resolvedSelfReport = report;
+    if (completedReport) setSelfReport(completedReport);
+    const audioBaseline = history
+      .filter((item) => item.condition.methodVersion === "echly-load-v1")
+      .map((item) => item.audioMeta);
     setError(null);
     setProcessingStage("チェックインを準備中...");
-    let resolvedTranscript = transcript.trim();
+    let resolvedTranscript = draftTranscript.trim();
     let useDemo = false;
+    let spokenCharacterCount = 0;
 
     try {
-      if (audioBlob) {
-        setProcessingStage("音声を文字起こし中...");
-        const formData = new FormData();
-        const extension = audioBlob.type.includes("mp4") ? "m4a" : "webm";
-        formData.append("audio", audioBlob, `echly-checkin.${extension}`);
+      const recordings = CHECK_IN_STEPS.flatMap((step) => {
+        const recording = audioByStep[step];
+        return recording.blob ? [{ step, blob: recording.blob }] : [];
+      });
 
+      if (recordings.length) {
+        setProcessingStage(
+          recordings.length === 2
+            ? "2件の音声を文字起こし中..."
+            : "音声を文字起こし中...",
+        );
         try {
-          const transcribeResponse = await fetch("/api/transcribe", {
-            method: "POST",
-            body: formData,
-          });
-          const transcribed = await parseApiResponse<{ transcript: string }>(transcribeResponse);
-          resolvedTranscript = resolvedTranscript
-            ? `${transcribed.transcript}\n\n補足: ${resolvedTranscript}`
-            : transcribed.transcript;
+          const transcribed = await Promise.all(
+            recordings.map(({ step, blob }) => transcribeRecording(step, blob)),
+          );
+          spokenCharacterCount = transcribed.reduce(
+            (total, item) => total + item.transcript.length,
+            0,
+          );
+          const voiceTranscript = transcribed
+            .sort((a, b) => a.step - b.step)
+            .map(({ step, transcript: value }) =>
+              `${STEP_TRANSCRIPT_LABELS[step]}\n${value}`,
+            )
+            .join("\n\n");
+          resolvedTranscript = draftTranscript.trim()
+            ? `${voiceTranscript}\n\n【補足テキスト】\n${draftTranscript.trim()}`
+            : voiceTranscript;
         } catch (transcribeError) {
           if (canUseDemoFallback(transcribeError) && resolvedTranscript) {
             useDemo = true;
@@ -176,19 +281,21 @@ export function EchlyApp({ todayLabel }: EchlyAppProps) {
         throw new ApiClientError("音声またはテキストを入力してください。", "INPUT_REQUIRED");
       }
 
-      const resolvedAudioMeta: AudioMeta = {
-        ...audioMeta,
-        speechRate:
-          audioMeta.durationSec > 0
-            ? Number((resolvedTranscript.length / audioMeta.durationSec).toFixed(2))
-            : null,
-      };
+      const resolvedAudioMeta = aggregateAudioMeta(audioByStep, spokenCharacterCount);
 
-      setProcessingStage("タスクと負荷シグナルを解析中...");
+      setProcessingStage("タスクと負荷スコアを解析中...");
       let result: AnalysisResult;
 
       if (useDemo) {
-        result = createDemoAnalysis(resolvedTranscript);
+        const demo = createDemoAnalysis(resolvedTranscript);
+        result = {
+          ...demo,
+          condition: calculateLoadSignal({
+            selfReport: resolvedSelfReport,
+            audioMeta: resolvedAudioMeta,
+            audioBaseline,
+          }),
+        };
       } else {
         try {
           const analyzeResponse = await fetch("/api/analyze", {
@@ -196,6 +303,8 @@ export function EchlyApp({ todayLabel }: EchlyAppProps) {
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
               transcript: resolvedTranscript,
+              selfReport: resolvedSelfReport,
+              audioBaseline,
               audioMeta: resolvedAudioMeta,
               referenceDate: new Date().toISOString(),
               timeZone:
@@ -205,7 +314,15 @@ export function EchlyApp({ todayLabel }: EchlyAppProps) {
           result = await parseApiResponse<AnalysisResult>(analyzeResponse);
         } catch (analyzeError) {
           if (canUseDemoFallback(analyzeError)) {
-            result = createDemoAnalysis(resolvedTranscript);
+            const demo = createDemoAnalysis(resolvedTranscript);
+            result = {
+              ...demo,
+              condition: calculateLoadSignal({
+                selfReport: resolvedSelfReport,
+                audioMeta: resolvedAudioMeta,
+                audioBaseline,
+              }),
+            };
             useDemo = true;
           } else {
             throw analyzeError;
@@ -305,9 +422,11 @@ export function EchlyApp({ todayLabel }: EchlyAppProps) {
   }
 
   function startNewCheckIn() {
+    setSelfReport({});
+    setDraftTranscript("");
     setTranscript("");
-    setAudioBlob(null);
-    setAudioMeta(EMPTY_AUDIO_META);
+    setAudioByStep(createEmptyStepAudioState());
+    setAudioMeta({ ...EMPTY_AUDIO_META });
     setAnalysis(null);
     setPlan(null);
     setAppliedActionIds([]);
@@ -369,11 +488,16 @@ export function EchlyApp({ todayLabel }: EchlyAppProps) {
     content = (
       <CheckInView
         todayLabel={todayLabel}
-        transcript={transcript}
-        onTranscriptChange={setTranscript}
-        audioBlob={audioBlob}
+        previousCondition={history.find((item) => item.condition.methodVersion === "echly-load-v1")?.condition ?? null}
+        transcript={draftTranscript}
+        onTranscriptChange={setDraftTranscript}
+        audioByStep={{ 1: audioByStep[1].blob, 2: audioByStep[2].blob }}
         onAudioReady={handleAudioReady}
         onAudioDiscard={handleAudioDiscard}
+        selfReport={selfReport}
+        onSelfReportChange={(key, value) =>
+          setSelfReport((current) => ({ ...current, [key]: value }))
+        }
         onAnalyze={handleAnalyze}
         onError={setError}
         processingStage={processingStage}

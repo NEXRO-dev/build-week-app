@@ -7,12 +7,38 @@ export const AudioMetaSchema = z.object({
   speechRate: z.number().min(0).nullable(),
 });
 
+export const WorkloadSelfReportSchema = z.object({
+  mentalDemand: z.number().min(0).max(100),
+  physicalDemand: z.number().min(0).max(100),
+  temporalDemand: z.number().min(0).max(100),
+  performance: z.number().min(0).max(100),
+  effort: z.number().min(0).max(100),
+  frustration: z.number().min(0).max(100),
+  sleepiness: z.number().int().min(1).max(9),
+});
+
+const LoadSignalComponentsSchema = z.object({
+  rawTlx: z.number().min(0).max(100),
+  selfReport: WorkloadSelfReportSchema,
+  sleepiness: z.number().min(0).max(100),
+  voiceDeviation: z.number().min(0).max(100).nullable(),
+  voiceBaselineCount: z.number().int().min(0),
+  workloadWeight: z.number().min(0).max(1),
+  sleepinessWeight: z.number().min(0).max(1),
+  voiceWeight: z.number().min(0).max(1),
+});
+
+
 export const ConditionSignalSchema = z.object({
+  score: z.number().int().min(0).max(100),
   level: z.enum(["normal", "caution", "high"]),
   label: z.string(),
   summary: z.string(),
   evidence: z.array(z.string()),
   disclaimer: z.string(),
+  confidence: z.enum(["standard", "limited"]),
+  components: LoadSignalComponentsSchema,
+  methodVersion: z.literal("echly-load-v1"),
 });
 
 export const ExtractedTaskSchema = z.object({
@@ -51,6 +77,10 @@ export const ExtractedTaskSchema = z.object({
   movable: z.boolean(),
   burden: z.enum(["high", "medium", "low"]),
   sourceText: z.string(),
+});
+
+export const TaskExtractionResultSchema = z.object({
+  tasks: z.array(ExtractedTaskSchema),
 });
 
 export const AnalysisResultSchema = z.object({
@@ -95,6 +125,11 @@ export const TomorrowPlanSchema = z.object({
   rationale: z.array(z.string()),
 });
 
+export const PlanGenerationSchema = TomorrowPlanSchema.omit({
+  condition: true,
+});
+
+
 export const CalendarEventSchema = z.object({
   id: z.string(),
   title: z.string(),
@@ -107,6 +142,8 @@ export const CalendarEventSchema = z.object({
 export const AnalyzeRequestSchema = z.object({
   transcript: z.string().trim().min(1).max(12000),
   audioMeta: AudioMetaSchema,
+  audioBaseline: z.array(AudioMetaSchema).max(30).default([]),
+  selfReport: WorkloadSelfReportSchema,
   referenceDate: z.string().datetime(),
   timeZone: z.string().min(1).max(100),
 });

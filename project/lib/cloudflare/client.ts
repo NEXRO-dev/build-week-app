@@ -106,21 +106,101 @@ export async function runCloudflareModel(
   return payload.result;
 }
 
+function contentPartValue(content: unknown) {
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return undefined;
+
+  for (const part of content) {
+    if (!part || typeof part !== "object") continue;
+    const candidate = part as { parsed?: unknown; text?: unknown };
+    if (candidate.parsed !== undefined) return candidate.parsed;
+    if (candidate.text !== undefined) return candidate.text;
+  }
+
+  return undefined;
+}
+
+function responsesApiOutputValue(output: unknown) {
+  if (!Array.isArray(output)) return undefined;
+
+  for (const item of output) {
+    if (!item || typeof item !== "object") continue;
+    const candidate = item as { parsed?: unknown; content?: unknown };
+    if (candidate.parsed !== undefined) return candidate.parsed;
+    const content = contentPartValue(candidate.content);
+    if (content !== undefined) return content;
+  }
+
+  return undefined;
+}
+
 function structuredResponseValue(result: unknown) {
   if (!result || typeof result !== "object") return result;
 
   const candidate = result as {
     response?: unknown;
     output_text?: unknown;
-    choices?: Array<{ message?: { content?: unknown } }>;
+    output?: unknown;
+    choices?: Array<{
+      message?: { parsed?: unknown; content?: unknown };
+    }>;
   };
+  const message = candidate.choices?.[0]?.message;
 
   return (
     candidate.response ??
     candidate.output_text ??
-    candidate.choices?.[0]?.message?.content ??
+    message?.parsed ??
+    contentPartValue(message?.content) ??
+    responsesApiOutputValue(candidate.output) ??
     result
   );
+}
+
+const STRUCTURED_WRAPPER_KEYS = [
+  "response",
+  "result",
+  "data",
+  "plan",
+  "analysis",
+  "draft",
+  "json",
+] as const;
+
+function parseStructuredResponse<T>(schema: z.ZodType<T>, value: unknown) {
+  const candidates: unknown[] = [value];
+  let lastError: unknown = new Error("No structured response candidate found.");
+
+  for (let index = 0; index < candidates.length && index < 12; index += 1) {
+    let candidate = candidates[index];
+
+    if (typeof candidate === "string") {
+      try {
+        candidate = JSON.parse(candidate);
+      } catch (error) {
+        lastError = error;
+        continue;
+      }
+    }
+
+    const parsed = schema.safeParse(candidate);
+    if (parsed.success) return parsed.data;
+    lastError = parsed.error;
+
+    if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) {
+      continue;
+    }
+
+    const record = candidate as Record<string, unknown>;
+    for (const key of STRUCTURED_WRAPPER_KEYS) {
+      if (record[key] !== undefined) candidates.push(record[key]);
+    }
+
+    const keys = Object.keys(record);
+    if (keys.length === 1) candidates.push(record[keys[0]]);
+  }
+
+  throw lastError;
 }
 
 export async function runCloudflareStructuredOutput<T>({
@@ -149,8 +229,7 @@ export async function runCloudflareStructuredOutput<T>({
 
   try {
     const value = structuredResponseValue(result);
-    const parsed = typeof value === "string" ? JSON.parse(value) : value;
-    return schema.parse(parsed);
+    return parseStructuredResponse(schema, value);
   } catch (error) {
     throw new CloudflareStructuredOutputError(
       "Cloudflare Workers AI returned an invalid structured response.",

@@ -3,14 +3,14 @@
 import { Button } from "@heroui/react";
 import { ArrowLeft, ArrowRight, CalendarDays, LoaderCircle, Share2 } from "lucide-react";
 
-import type { AudioMeta, ConditionLevel, ExtractedTask, TaskType } from "@/types/echly";
+import type { AudioMeta, ConditionLevel, ConditionSignal, ExtractedTask, TaskType } from "@/types/echly";
 import { isTomorrowActionableTask } from "@/lib/tasks/temporal";
 
 type Props = {
   transcript: string;
   audioMeta: AudioMeta;
   tasks: ExtractedTask[];
-  condition: { level: ConditionLevel; label: string; summary: string; evidence: string[]; disclaimer: string };
+  condition: ConditionSignal;
   source: "cloudflare" | "demo";
   onBack: () => void;
   onCreatePlan: () => void;
@@ -57,12 +57,13 @@ const wave = [12,20,35,26,45,22,31,48,25,17,39,52,28,44,21,35,59,27,18,45,33,54,
 
 function scoreFor(level: ConditionLevel) { return level === "high" ? 72 : level === "caution" ? 58 : 34; }
 function formatDuration(seconds: number) {
-  const total = seconds || 88;
+  const total = Math.max(0, Math.round(seconds));
   return `${Math.floor(total / 60).toString().padStart(2, "0")}:${(total % 60).toString().padStart(2, "0")}`;
 }
 
 export function AnalysisView({ transcript, audioMeta, tasks, condition, onBack, onCreatePlan, processingStage, error }: Props) {
-  const score = scoreFor(condition.level);
+  const score = condition.score ?? scoreFor(condition.level);
+  const gaugeColor = condition.level === "high" ? "#ef3f71" : condition.level === "caution" ? "#e89a20" : "#28a477";
   const groupedTasks: Record<AnalysisGroup, ExtractedTask[]> = {
     reflection: [],
     tomorrow: [],
@@ -100,7 +101,7 @@ export function AnalysisView({ transcript, audioMeta, tasks, condition, onBack, 
               <h2 className="text-xs font-bold">負荷シグナル</h2>
               <span className={`rounded px-2 py-1 text-[10px] font-bold ${condition.level === "high" ? "bg-[#fff0f4] text-[#ef3f71]" : condition.level === "caution" ? "bg-[#fff7e9] text-[#de8a16]" : "bg-[#eaf8f2] text-[#28a477]"}`}>{condition.label}</span>
             </div>
-            <div className="relative mx-auto mt-6 size-32 rounded-full" style={{ background: `conic-gradient(#ff3f72 ${score * 3.6}deg, #eceef4 0)` }}>
+            <div className="relative mx-auto mt-6 size-32 rounded-full" style={{ background: `conic-gradient(${gaugeColor} ${score * 3.6}deg, #eceef4 0)` }}>
               <div className="absolute inset-[12px] grid place-items-center rounded-full bg-white">
                 <p className="text-center"><span className="text-3xl font-bold">{score}</span><span className="text-xs">/100</span></p>
               </div>
@@ -108,6 +109,54 @@ export function AnalysisView({ transcript, audioMeta, tasks, condition, onBack, 
             <div className="mt-4 flex flex-wrap justify-center gap-x-2 gap-y-1 text-[9px] text-[#737b99]"><span className="text-[#43b98b]">● 低</span><span className="text-[#5870df]">● 通常</span><span className="text-[#f0a62b]">● 注意</span><span className="text-[#ef3f71]">● 高</span></div>
           </section>
         </div>
+        <section className="rounded-lg border border-[#e3e5ef] p-4">
+          <div className="flex items-center justify-between gap-3">
+            <h2 className="text-xs font-bold">算出根拠</h2>
+            <span className="text-[10px] font-medium text-[#68708f]">
+              {condition.confidence === "standard"
+                ? "自己評価＋個人内音声"
+                : "自己評価中心"}
+            </span>
+          </div>
+          <p className="mt-3 text-xs font-semibold leading-5 text-[#343c5b]">
+            {condition.summary}
+          </p>
+          {condition.components ? (
+            <div className="mt-4 space-y-3">
+              {[
+                ["主観的ワークロード", condition.components.rawTlx],
+                ["眠気", condition.components.sleepiness],
+                [
+                  "音声の個人内変化",
+                  condition.components.voiceDeviation,
+                ],
+              ].map(([label, value]) => (
+                <div key={String(label)}>
+                  <div className="flex justify-between gap-3 text-[10px]">
+                    <span className="text-[#626b89]">{label}</span>
+                    <span className="font-bold tabular-nums text-[#303857]">
+                      {typeof value === "number" ? `${value}/100` : "ベースライン作成中"}
+                    </span>
+                  </div>
+                  <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-[#eceef4]">
+                    <span
+                      className="block h-full rounded-full bg-[#5b42ff]"
+                      style={{ width: `${typeof value === "number" ? value : 0}%` }}
+                    />
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : null}
+          <ul className="mt-4 space-y-1 text-[10px] leading-4 text-[#59617d]">
+            {condition.evidence.map((item) => <li key={item}>・{item}</li>)}
+          </ul>
+          <p className="mt-3 border-t border-[#eceef3] pt-3 text-[9px] leading-4 text-[#8188a1]">
+            {condition.disclaimer}
+          </p>
+        </section>
+
+
 
         <section className="rounded-lg border border-[#e3e5ef] p-4">
           <h2 className="text-xs font-bold">内容の整理</h2>
