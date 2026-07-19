@@ -442,7 +442,7 @@ export function EchlyApp({ todayLabel }: EchlyAppProps) {
     content = analysis ? (
       <AnalysisView
         transcript={transcript}
-        audioBlob={audioBlob}
+        audioBlob={audioByStep[1].blob ?? audioByStep[2].blob}
         audioMeta={audioMeta}
         tasks={analysis.tasks}
         condition={analysis.condition}

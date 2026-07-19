@@ -65,8 +65,83 @@ function formatDuration(seconds: number) {
   return `${Math.floor(total / 60).toString().padStart(2, "0")}:${(total % 60).toString().padStart(2, "0")}`;
 }
 
-export function AnalysisView({ transcript, audioMeta, tasks, condition, onBack, onCreatePlan, processingStage, error }: Props) {
-  const score = scoreFor(condition.level);
+async function createWaveformHeights(blob: Blob) {
+  const AudioContextClass =
+    window.AudioContext ||
+    (window as typeof window & { webkitAudioContext?: typeof AudioContext })
+      .webkitAudioContext;
+
+  if (!AudioContextClass) return null;
+
+  const context = new AudioContextClass();
+  try {
+    const buffer = await context.decodeAudioData(await blob.arrayBuffer());
+    const channelData = buffer.getChannelData(0);
+    const bucketSize = Math.max(1, Math.floor(channelData.length / waveformBarCount));
+    const peaks = Array.from({ length: waveformBarCount }, (_, bucketIndex) => {
+      const start = bucketIndex * bucketSize;
+      const end = bucketIndex === waveformBarCount - 1
+        ? channelData.length
+        : Math.min(channelData.length, start + bucketSize);
+      let peak = 0;
+
+      for (let index = start; index < end; index += 1) {
+        peak = Math.max(peak, Math.abs(channelData[index] ?? 0));
+      }
+
+      return peak;
+    });
+    const maxPeak = Math.max(...peaks, 0.01);
+
+    return peaks.map((peak) => {
+      const normalized = Math.sqrt(peak / maxPeak);
+      return Math.round(
+        waveformMinHeight + normalized * (waveformMaxHeight - waveformMinHeight),
+      );
+    });
+  } finally {
+    await context.close();
+  }
+}
+
+function shareTextFor(
+  condition: ConditionSignal,
+  groupedTasks: Record<AnalysisGroup, ExtractedTask[]>,
+) {
+  const sections = analysisGroups
+    .map((group) => {
+      const items = groupedTasks[group.id];
+      if (!items.length) return null;
+      return [`【${group.label}】`, ...items.map((item) => `- ${item.title}`)].join("\n");
+    })
+    .filter(Boolean)
+    .join("\n\n");
+
+  return [
+    "Echly 解析結果",
+    "",
+    `負荷シグナル: ${condition.label}`,
+    condition.summary,
+    sections ? `\n${sections}` : "",
+  ].join("\n").trim();
+}
+
+export function AnalysisView({ transcript, audioBlob, audioMeta, tasks, condition, onBack, onCreatePlan, processingStage, error }: Props) {
+  const score = condition.score ?? scoreFor(condition.level);
+  const gaugeColor = condition.level === "high" ? "#ef3f71" : condition.level === "caution" ? "#e89a20" : "#28a477";
+  const [shareFeedback, setShareFeedback] = useState<string | null>(null);
+  const [audioCurrentTime, setAudioCurrentTime] = useState(0);
+  const [audioDuration, setAudioDuration] = useState(audioMeta.durationSec || 0);
+  const [waveformHeights, setWaveformHeights] = useState<number[] | null>(null);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const audioProgressFrameRef = useRef<number | null>(null);
+  const audioUrl = useMemo(
+    () => audioBlob ? URL.createObjectURL(audioBlob) : null,
+    [audioBlob],
+  );
+  const audioProgress = audioDuration > 0
+    ? Math.min(1, audioCurrentTime / audioDuration)
+    : 0;
   const groupedTasks: Record<AnalysisGroup, ExtractedTask[]> = {
     reflection: [],
     tomorrow: [],
