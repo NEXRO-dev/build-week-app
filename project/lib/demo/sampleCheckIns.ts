@@ -11,6 +11,8 @@ import type {
 
 export const SAMPLE_TRANSCRIPT =
   "明日は10時にA社の予算会議。午後は資料の仕上げ、17時からCさんとブレスト。でも、今日はほとんど寝てなくて、正直もう頭が回らない。";
+export const SAMPLE_TRANSCRIPT_EN =
+  "Tomorrow I have a budget meeting with Acme at 10 AM, need to finish the proposal deck in the afternoon, and have a brainstorm with Chris at 5 PM. I barely slept last night and I'm having trouble focusing.";
 
 const DISCLAIMER = "診断ではなく、音声と発話内容からの推定です。";
 
@@ -209,6 +211,7 @@ export function createDemoAnalysis(transcript: string): AnalysisResult {
 export function createDemoPlan(
   tasks: ExtractedTask[],
   condition: AnalysisResult["condition"],
+  isEnglish = false,
 ): TomorrowPlan {
   const fixedTask = tasks.find((task) => !task.movable) ?? tasks[0];
   const focusTask =
@@ -227,7 +230,7 @@ export function createDemoPlan(
             title: fixedTask.title,
             originalTime: fixedTask.startTime,
             proposedTime: fixedTask.startTime,
-            reason: "重要度が高く、関係者との約束を優先します。",
+            reason: isEnglish ? "Keep this high-priority commitment with other people." : "重要度が高く、関係者との約束を優先します。",
             impact: "high",
           },
         ]
@@ -241,7 +244,7 @@ export function createDemoPlan(
               title: focusTask.title,
               originalTime: focusTask.startTime ?? "13:00",
               proposedTime: "15:00",
-              reason: "休息のあとに、90分の集中枠として確保します。",
+              reason: isEnglish ? "Protect a 90-minute focus block after some recovery time." : "休息のあとに、90分の集中枠として確保します。",
               impact: "medium",
             },
           ]
@@ -253,8 +256,8 @@ export function createDemoPlan(
             taskId: rescheduleTask.id,
             title: rescheduleTask.title,
             originalTime: rescheduleTask.startTime,
-            proposedTime: "翌営業日 16:00",
-            reason: "明日の負荷を下げるため、調整可能な予定を後ろへ移します。",
+            proposedTime: isEnglish ? "Next business day, 4:00 PM" : "翌営業日 16:00",
+            reason: isEnglish ? "Move a flexible commitment to reduce tomorrow's load." : "明日の負荷を下げるため、調整可能な予定を後ろへ移します。",
             impact: "low",
           },
         ]
@@ -266,7 +269,7 @@ export function createDemoPlan(
               id: "rest-short",
               startTime: "12:30",
               endTime: "13:00",
-              reason: "午後の集中を保つための短い休息です。",
+              reason: isEnglish ? "A short break to support focus in the afternoon." : "午後の集中を保つための短い休息です。",
             },
           ]
         : [
@@ -274,28 +277,28 @@ export function createDemoPlan(
               id: "rest-recovery",
               startTime: "13:00",
               endTime: "15:00",
-              reason: "睡眠不足の表現を踏まえ、予定を入れない回復時間にします。",
+              reason: isEnglish ? "Leave this time open for recovery based on signs of insufficient sleep." : "睡眠不足の表現を踏まえ、予定を入れない回復時間にします。",
             },
           ],
     emailDrafts: rescheduleTask
       ? [
           {
             id: `email-${rescheduleTask.id}`,
-            to: rescheduleTask.people.length ? rescheduleTask.people : ["関係者"],
-            subject: `${rescheduleTask.title}の日程調整のお願い`,
-            body: `お疲れさまです。\n\n明日予定している「${rescheduleTask.title}」について、進行上の都合により日程を調整させていただけないでしょうか。\n\n可能でしたら、翌営業日の16時以降で再調整できればと考えています。ご都合のよい時間をお知らせいただけますと幸いです。\n\nどうぞよろしくお願いいたします。`,
+            to: rescheduleTask.people.length ? rescheduleTask.people : [isEnglish ? "Attendees" : "関係者"],
+            subject: isEnglish ? `Request to reschedule ${rescheduleTask.title}` : `${rescheduleTask.title}の日程調整のお願い`,
+            body: isEnglish ? `Hello,\n\nWould it be possible to reschedule tomorrow's ${rescheduleTask.title}? If possible, I would appreciate moving it to after 4:00 PM on the next business day. Please let me know what works for you.\n\nThank you.` : `お疲れさまです。\n\n明日予定している「${rescheduleTask.title}」について、進行上の都合により日程を調整させていただけないでしょうか。\n\n可能でしたら、翌営業日の16時以降で再調整できればと考えています。ご都合のよい時間をお知らせいただけますと幸いです。\n\nどうぞよろしくお願いいたします。`,
             relatedTaskId: rescheduleTask.id,
             tone: "polite",
-            caution: "宛先と候補日時を確認してから下書きを利用してください。",
+            caution: isEnglish ? "Review the recipients and proposed time before using this draft." : "宛先と候補日時を確認してから下書きを利用してください。",
           },
         ]
       : [],
     rationale: [
-      "動かしにくい重要予定を先に固定しました。",
+      isEnglish ? "Protected the most important fixed commitment first." : "動かしにくい重要予定を先に固定しました。",
       condition.level === "high"
-        ? "高負荷シグナルを踏まえ、午後の前半を回復時間として空けました。"
-        : "午後の集中力を保つため、短い休息を確保しました。",
-      "調整可能な予定だけを承認候補にしています。",
+        ? isEnglish ? "Kept the early afternoon open for recovery because the load signal is high." : "高負荷シグナルを踏まえ、午後の前半を回復時間として空けました。"
+        : isEnglish ? "Added a short break to support afternoon focus." : "午後の集中力を保つため、短い休息を確保しました。",
+      isEnglish ? "Only flexible commitments are included as approval options." : "調整可能な予定だけを承認候補にしています。",
     ],
   };
 }

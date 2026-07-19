@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 
 import { AnalysisView } from "@/components/analysis/AnalysisView";
 import { ApprovalView } from "@/components/approval/ApprovalView";
+import { SignInView } from "@/components/auth/SignInView";
 import { CheckInView, type CheckInStep } from "@/components/check-in/CheckInView";
 import { HistoryView } from "@/components/history/HistoryView";
 import { AppShell } from "@/components/layout/AppShell";
@@ -17,6 +18,8 @@ import {
   getSampleHistory,
 } from "@/lib/demo/sampleCheckIns";
 import { isTomorrowActionableTask } from "@/lib/tasks/temporal";
+import { authClient } from "@/lib/auth-client";
+import { useI18n } from "@/lib/i18n";
 import {
   calculateLoadSignal,
   isCompleteWorkloadSelfReport,
@@ -57,11 +60,24 @@ function canUseDemoFallback(error: unknown) {
   );
 }
 
-async function parseApiResponse<T>(response: Response): Promise<T> {
+async function parseApiResponse<T>(response: Response, isEnglish = false): Promise<T> {
   const data = (await response.json()) as T & { error?: string; code?: string };
 
   if (!response.ok) {
-    throw new ApiClientError(data.error ?? "処理に失敗しました。", data.code);
+    const englishErrors: Record<string, string> = {
+      UNAUTHORIZED: "Please sign in to continue.",
+      AUDIO_REQUIRED: "An audio file is required.",
+      AUDIO_TOO_LARGE: "Audio files must be 4 MB or smaller.",
+      CLOUDFLARE_CONFIG_MISSING: "AI processing is not configured yet.",
+      CLOUDFLARE_AUTH_FAILED: "The AI service credentials could not be verified.",
+      CLOUDFLARE_LIMIT_REACHED: "The AI usage limit has been reached. Please try again later.",
+      CLOUDFLARE_INVALID_RESPONSE: "The AI response could not be validated. Please try again.",
+      CLOUDFLARE_REQUEST_FAILED: "AI processing could not be completed. Please try again later.",
+    };
+    const message = isEnglish
+      ? englishErrors[data.code ?? ""] ?? "Something went wrong. Please try again."
+      : data.error ?? "処理に失敗しました。";
+    throw new ApiClientError(message, data.code);
   }
 
   return data;
@@ -136,6 +152,8 @@ type EchlyAppProps = {
 };
 
 export function EchlyApp({ todayLabel }: EchlyAppProps) {
+  const { isEnglish, t } = useI18n();
+  const { data: session, isPending: isSessionPending } = authClient.useSession();
   const [view, setView] = useState<WorkspaceView>("checkin");
   const [draftTranscript, setDraftTranscript] = useState("");
   const [transcript, setTranscript] = useState("");
@@ -189,6 +207,16 @@ export function EchlyApp({ todayLabel }: EchlyAppProps) {
     );
   }, [plan]);
 
+  if (isSessionPending) {
+    return (
+      <main className="grid min-h-dvh place-items-center bg-[#f7f8fc] text-sm text-[#68708f]">
+        {t("ログイン状態を確認しています...", "Checking your session...")}
+      </main>
+    );
+  }
+
+  if (!session) return <SignInView />;
+
   function handleAudioReady(step: CheckInStep, blob: Blob, meta: AudioMeta) {
     setAudioByStep((current) => ({
       ...current,
@@ -209,15 +237,16 @@ export function EchlyApp({ todayLabel }: EchlyAppProps) {
     const extension = audioBlob.type.includes("mp4") ? "m4a" : "webm";
     formData.append("audio", audioBlob, `echly-step-${step}.${extension}`);
     formData.append("context", step === 1 ? "reflection" : "planning");
+    formData.append("locale", isEnglish ? "us-en" : "jp-ja");
     const response = await fetch("/api/transcribe", { method: "POST", body: formData });
-    const result = await parseApiResponse<{ transcript: string }>(response);
+    const result = await parseApiResponse<{ transcript: string }>(response, isEnglish);
     return { step, transcript: result.transcript };
   }
 
   async function handleAnalyze(completedReport?: WorkloadSelfReport) {
     const report = completedReport ?? selfReport;
     if (!isCompleteWorkloadSelfReport(report)) {
-      setError("負荷の自己評価7項目に回答してください。");
+      setError(t("負荷の自己評価7項目に回答してください。", "Please answer all seven workload questions."));
       return;
     }
 
@@ -227,7 +256,7 @@ export function EchlyApp({ todayLabel }: EchlyAppProps) {
       .filter((item) => item.condition.methodVersion === "echly-load-v1")
       .map((item) => item.audioMeta);
     setError(null);
-    setProcessingStage("チェックインを準備中...");
+    setProcessingStage(t("チェックインを準備中...", "Preparing your check-in..."));
     let resolvedTranscript = draftTranscript.trim();
     let useDemo = false;
     let spokenCharacterCount = 0;
@@ -241,8 +270,8 @@ export function EchlyApp({ todayLabel }: EchlyAppProps) {
       if (recordings.length) {
         setProcessingStage(
           recordings.length === 2
-            ? "2件の音声を文字起こし中..."
-            : "音声を文字起こし中...",
+            ? t("2件の音声を文字起こし中...", "Transcribing two recordings...")
+            : t("音声を文字起こし中...", "Transcribing audio..."),
         );
         try {
           const transcribed = await Promise.all(
@@ -255,18 +284,18 @@ export function EchlyApp({ todayLabel }: EchlyAppProps) {
           const voiceTranscript = transcribed
             .sort((a, b) => a.step - b.step)
             .map(({ step, transcript: value }) =>
-              `${STEP_TRANSCRIPT_LABELS[step]}\n${value}`,
+              `${isEnglish ? (step === 1 ? "[STEP 1: TODAY'S REFLECTION]" : "[STEP 2: TOMORROW'S PLANS & TASKS]") : STEP_TRANSCRIPT_LABELS[step]}\n${value}`,
             )
             .join("\n\n");
           resolvedTranscript = draftTranscript.trim()
-            ? `${voiceTranscript}\n\n【補足テキスト】\n${draftTranscript.trim()}`
+            ? `${voiceTranscript}\n\n${t("【補足テキスト】", "[ADDITIONAL NOTES]")}\n${draftTranscript.trim()}`
             : voiceTranscript;
         } catch (transcribeError) {
           if (canUseDemoFallback(transcribeError) && resolvedTranscript) {
             useDemo = true;
           } else if (canUseDemoFallback(transcribeError)) {
             throw new ApiClientError(
-              "現在、音声を文字起こしできません。「テキストで入力」から内容を入力すると、デモ解析を利用できます。",
+              t("現在、音声を文字起こしできません。「テキストで入力」から内容を入力すると、デモ解析を利用できます。", "Audio transcription is currently unavailable. Type your check-in to use the demo analysis."),
               transcribeError instanceof ApiClientError
                 ? transcribeError.code
                 : "CLOUDFLARE_REQUEST_FAILED",
@@ -278,12 +307,12 @@ export function EchlyApp({ todayLabel }: EchlyAppProps) {
       }
 
       if (!resolvedTranscript) {
-        throw new ApiClientError("音声またはテキストを入力してください。", "INPUT_REQUIRED");
+        throw new ApiClientError(t("音声またはテキストを入力してください。", "Record audio or enter text to continue."), "INPUT_REQUIRED");
       }
 
       const resolvedAudioMeta = aggregateAudioMeta(audioByStep, spokenCharacterCount);
 
-      setProcessingStage("タスクと負荷スコアを解析中...");
+      setProcessingStage(t("タスクと負荷スコアを解析中...", "Analyzing tasks and workload..."));
       let result: AnalysisResult;
 
       if (useDemo) {
@@ -302,6 +331,7 @@ export function EchlyApp({ todayLabel }: EchlyAppProps) {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
+              locale: isEnglish ? "us-en" : "jp-ja",
               transcript: resolvedTranscript,
               selfReport: resolvedSelfReport,
               audioBaseline,
@@ -311,7 +341,7 @@ export function EchlyApp({ todayLabel }: EchlyAppProps) {
                 Intl.DateTimeFormat().resolvedOptions().timeZone || "Asia/Tokyo",
             }),
           });
-          result = await parseApiResponse<AnalysisResult>(analyzeResponse);
+          result = await parseApiResponse<AnalysisResult>(analyzeResponse, isEnglish);
         } catch (analyzeError) {
           if (canUseDemoFallback(analyzeError)) {
             const demo = createDemoAnalysis(resolvedTranscript);
@@ -338,7 +368,7 @@ export function EchlyApp({ todayLabel }: EchlyAppProps) {
       setSource(useDemo ? "demo" : "cloudflare");
       setView("analysis");
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "チェックインを解析できませんでした。");
+      setError(caught instanceof Error ? caught.message : t("チェックインを解析できませんでした。", "Could not analyze your check-in."));
     } finally {
       setProcessingStage(null);
     }
@@ -347,7 +377,7 @@ export function EchlyApp({ todayLabel }: EchlyAppProps) {
   async function handleCreatePlan() {
     if (!analysis) return;
     setError(null);
-    setProcessingStage("明日のプランを作成中...");
+    setProcessingStage(t("明日のプランを作成中...", "Creating tomorrow's plan..."));
 
     try {
       let nextPlan: TomorrowPlan;
@@ -355,12 +385,13 @@ export function EchlyApp({ todayLabel }: EchlyAppProps) {
 
       if (source === "demo") {
         await new Promise((resolve) => window.setTimeout(resolve, 450));
-        nextPlan = createDemoPlan(tomorrowTasks, analysis.condition);
+        nextPlan = createDemoPlan(tomorrowTasks, analysis.condition, isEnglish);
       } else {
         const response = await fetch("/api/plan", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
+            locale: isEnglish ? "us-en" : "jp-ja",
             tasks: tomorrowTasks,
             condition: analysis.condition,
             calendarEvents: mockCalendarEvents,
@@ -368,11 +399,11 @@ export function EchlyApp({ todayLabel }: EchlyAppProps) {
         });
 
         try {
-          const data = await parseApiResponse<{ plan: TomorrowPlan }>(response);
+          const data = await parseApiResponse<{ plan: TomorrowPlan }>(response, isEnglish);
           nextPlan = data.plan;
         } catch (planError) {
           if (canUseDemoFallback(planError)) {
-            nextPlan = createDemoPlan(analysis.tasks, analysis.condition);
+            nextPlan = createDemoPlan(analysis.tasks, analysis.condition, isEnglish);
             setSource("demo");
           } else {
             throw planError;
@@ -384,7 +415,7 @@ export function EchlyApp({ todayLabel }: EchlyAppProps) {
       setAppliedActionIds([]);
       setView("plan");
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "明日のプランを作成できませんでした。");
+      setError(caught instanceof Error ? caught.message : t("明日のプランを作成できませんでした。", "Could not create tomorrow's plan."));
     } finally {
       setProcessingStage(null);
     }
@@ -399,7 +430,7 @@ export function EchlyApp({ todayLabel }: EchlyAppProps) {
     const checkIn: CheckIn = {
       id: newId(),
       createdAt: new Date().toISOString(),
-      transcript: saveTranscript ? transcript : "文字起こしは保存しない設定です。",
+      transcript: saveTranscript ? transcript : t("文字起こしは保存しない設定です。", "Transcript storage is turned off."),
       audioMeta,
       condition: analysis.condition,
       tasks: analysis.tasks,
@@ -481,6 +512,7 @@ export function EchlyApp({ todayLabel }: EchlyAppProps) {
   } else if (view === "settings") {
     content = (
       <SettingsView
+        user={session.user}
         saveTranscript={saveTranscript}
         onSaveTranscriptChange={setSaveTranscript}
       />
@@ -489,6 +521,7 @@ export function EchlyApp({ todayLabel }: EchlyAppProps) {
     content = (
       <CheckInView
         todayLabel={todayLabel}
+        userName={session.user.name}
         previousCondition={history.find((item) => item.condition.methodVersion === "echly-load-v1")?.condition ?? null}
         transcript={draftTranscript}
         onTranscriptChange={setDraftTranscript}

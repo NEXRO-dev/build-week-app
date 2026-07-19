@@ -2,6 +2,7 @@
 
 import { Button } from "@heroui/react";
 import { CalendarDays, ChartNoAxesColumnIncreasing, Mic } from "lucide-react";
+import { useI18n } from "@/lib/i18n";
 
 type EmptyWorkspaceViewProps = {
   type: "analysis" | "plan";
@@ -16,6 +17,7 @@ export function EmptyWorkspaceView({
   onCheckIn,
   onShowAnalysis,
 }: EmptyWorkspaceViewProps) {
+  const { t } = useI18n();
   const isAnalysis = type === "analysis";
   const Icon = isAnalysis ? ChartNoAxesColumnIncreasing : CalendarDays;
   const actionShowsAnalysis = !isAnalysis && hasAnalysis && onShowAnalysis;
@@ -29,14 +31,14 @@ export function EmptyWorkspaceView({
         {isAnalysis ? "Analysis" : "Tomorrow plan"}
       </p>
       <h1 className="mt-2 text-xl font-semibold text-[#1f2927] sm:text-2xl">
-        {isAnalysis ? "解析結果はまだありません" : "明日のプランはまだありません"}
+        {isAnalysis ? t("解析結果はまだありません", "No analysis yet") : t("明日のプランはまだありません", "No plan for tomorrow yet")}
       </h1>
       <p className="mt-3 max-w-sm text-sm leading-6 text-[#687471]">
         {isAnalysis
-          ? "今日のことを話すか入力すると、負荷シグナルと予定候補を確認できます。"
+          ? t("今日のことを話すか入力すると、負荷シグナルと予定候補を確認できます。", "Talk or type about your day to see your load signal and schedule suggestions.")
           : hasAnalysis
-            ? "解析結果を確認して、明日の予定を作成してください。"
-            : "チェックインを解析すると、守る予定と調整候補をまとめます。"}
+            ? t("解析結果を確認して、明日の予定を作成してください。", "Review your analysis to create tomorrow's plan.")
+            : t("チェックインを解析すると、守る予定と調整候補をまとめます。", "Complete a check-in to organize fixed plans and possible adjustments.")}
       </p>
       <Button
         variant="primary"
@@ -45,7 +47,7 @@ export function EmptyWorkspaceView({
         className="mt-6 h-12 bg-[#195b52] px-6 text-white"
       >
         {actionShowsAnalysis ? <ChartNoAxesColumnIncreasing size={18} /> : <Mic size={18} />}
-        {actionShowsAnalysis ? "解析結果を確認" : "チェックインを始める"}
+        {actionShowsAnalysis ? t("解析結果を確認", "View analysis") : t("チェックインを始める", "Start check-in")}
       </Button>
     </section>
   );

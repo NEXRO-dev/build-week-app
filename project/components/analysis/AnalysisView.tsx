@@ -6,6 +6,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 import type { AudioMeta, ConditionLevel, ConditionSignal, ExtractedTask, TaskType } from "@/types/echly";
 import { isTomorrowActionableTask } from "@/lib/tasks/temporal";
+import { useI18n } from "@/lib/i18n";
 
 type Props = {
   transcript: string;
@@ -127,6 +128,32 @@ function shareTextFor(
 }
 
 export function AnalysisView({ transcript, audioBlob, audioMeta, tasks, condition, onBack, onCreatePlan, processingStage, error }: Props) {
+  const { isEnglish, t } = useI18n();
+  const localizedTaskTypeLabels: Record<TaskType, string> = isEnglish
+    ? { meeting: "Meeting", focus_work: "Focus work", admin: "Admin", communication: "Communication", personal: "Personal", unknown: "Uncategorized" }
+    : taskTypeLabels;
+  const localizedTemporalLabels = isEnglish
+    ? { past: "Past", today: "Today", tomorrow: "Tomorrow", future: "Future", unspecified: "Unscheduled" }
+    : temporalLabels;
+  const localizedAnalysisGroups = isEnglish
+    ? analysisGroups.map((group) => ({ ...group, label: { reflection: "Today's reflection", tomorrow: "Tomorrow's plans & tasks", concern: "Concerns", other: "Later or unscheduled" }[group.id] }))
+    : analysisGroups;
+  const localizedConditionLabel = isEnglish
+    ? condition.level === "high" ? "High" : condition.level === "caution" ? "Elevated" : "Normal"
+    : condition.label;
+  const localizedConditionSummary = isEnglish
+    ? condition.level === "high"
+      ? "Your load looks high today. Reduce movable commitments and protect recovery time tomorrow."
+      : condition.level === "caution"
+        ? "Your load looks elevated. Keep essential commitments and leave room to recover."
+        : "Your load is in a low-to-normal range. Keep some open space and continue tracking changes."
+    : condition.summary;
+  const localizedEvidence = isEnglish
+    ? ["Based on today's self-assessment", condition.confidence === "standard" ? "Compared with your personal voice baseline" : "Voice baseline is still being established"]
+    : condition.evidence;
+  const localizedDisclaimer = isEnglish
+    ? "This is not a diagnosis. Use this experimental signal only to notice personal changes and support rest decisions."
+    : condition.disclaimer;
   const score = condition.score ?? scoreFor(condition.level);
   const gaugeColor = condition.level === "high" ? "#ef3f71" : condition.level === "caution" ? "#e89a20" : "#28a477";
   const [shareFeedback, setShareFeedback] = useState<string | null>(null);
@@ -151,7 +178,9 @@ export function AnalysisView({ transcript, audioBlob, audioMeta, tasks, conditio
   for (const task of tasks) {
     groupedTasks[analysisGroupFor(task)].push(task);
   }
-  const shareText = shareTextFor(condition, groupedTasks);
+  const shareText = isEnglish
+    ? ["Echly analysis", "", `Load signal: ${localizedConditionLabel}`, localizedConditionSummary, "", ...tasks.map((task) => `- ${task.title}`)].join("\n").trim()
+    : shareTextFor(condition, groupedTasks);
 
   useEffect(() => () => {
     if (audioUrl) URL.revokeObjectURL(audioUrl);
@@ -183,20 +212,20 @@ export function AnalysisView({ transcript, audioBlob, audioMeta, tasks, conditio
     try {
       if (navigator.share) {
         await navigator.share({
-          title: "Echly 解析結果",
+          title: t("Echly 解析結果", "Echly analysis"),
           text: shareText,
         });
         return;
       }
       await navigator.clipboard.writeText(shareText);
-      setShareFeedback("共有内容をコピーしました");
+      setShareFeedback(t("共有内容をコピーしました", "Copied to clipboard"));
     } catch (caught) {
       if (caught instanceof DOMException && caught.name === "AbortError") return;
       try {
         await navigator.clipboard.writeText(shareText);
-        setShareFeedback("共有内容をコピーしました");
+        setShareFeedback(t("共有内容をコピーしました", "Copied to clipboard"));
       } catch {
-        setShareFeedback("共有できませんでした");
+        setShareFeedback(t("共有できませんでした", "Could not share"));
       }
     }
   }
@@ -242,9 +271,9 @@ export function AnalysisView({ transcript, audioBlob, audioMeta, tasks, conditio
   return (
     <div>
       <header className="grid h-16 grid-cols-[44px_1fr_44px] items-center border-b border-[#ececf3] px-3 pt-[env(safe-area-inset-top)]">
-        <button type="button" onClick={onBack} aria-label="戻る" className="grid size-10 place-items-center text-[#303857]"><ArrowLeft size={20} /></button>
-        <h1 className="text-center text-base font-bold">解析結果</h1>
-        <button type="button" onClick={handleShare} aria-label="解析結果を共有" title="負荷シグナルと内容の整理を共有" className="grid size-10 place-items-center text-[#303857] active:scale-95"><Upload size={19} /></button>
+        <button type="button" onClick={onBack} aria-label={t("戻る", "Back")} className="grid size-10 place-items-center text-[#303857]"><ArrowLeft size={20} /></button>
+        <h1 className="text-center text-base font-bold">{t("解析結果", "Analysis")}</h1>
+        <button type="button" onClick={handleShare} aria-label={t("解析結果を共有", "Share analysis")} title={t("負荷シグナルと内容の整理を共有", "Share your load signal and organized notes")} className="grid size-10 place-items-center text-[#303857] active:scale-95"><Upload size={19} /></button>
       </header>
 
       <div className="space-y-3 px-4 pb-8 pt-3">
@@ -253,7 +282,7 @@ export function AnalysisView({ transcript, audioBlob, audioMeta, tasks, conditio
 
         <section className="rounded-lg border border-[#e3e5ef] p-4">
           <div className="flex items-center justify-between gap-3">
-            <h2 className="text-xs font-bold">録音した音声</h2>
+            <h2 className="text-xs font-bold">{t("録音した音声", "Recorded audio")}</h2>
             <span className="font-mono text-[10px] text-[#737b99]">{formatDuration(audioDuration || audioMeta.durationSec)}</span>
           </div>
           <button
@@ -261,7 +290,7 @@ export function AnalysisView({ transcript, audioBlob, audioMeta, tasks, conditio
             onPointerDown={handleWaveSeek}
             disabled={!audioUrl}
             className="relative mt-5 block h-[58px] w-full overflow-hidden rounded-md bg-[#f7f8fc] px-2 disabled:cursor-default"
-            aria-label="波形をタップして再生位置を移動"
+            aria-label={t("波形をタップして再生位置を移動", "Tap the waveform to seek")}
           >
             {waveformHeights ? (
               <div className="analysis-wave h-full" aria-hidden="true">
@@ -269,7 +298,7 @@ export function AnalysisView({ transcript, audioBlob, audioMeta, tasks, conditio
               </div>
             ) : (
               <div className="grid h-full place-items-center text-xs font-medium text-[#737b99]">
-                {audioUrl ? "波形を生成中..." : "録音なし"}
+                {audioUrl ? t("波形を生成中...", "Generating waveform...") : t("録音なし", "No recording")}
               </div>
             )}
             {audioUrl ? (
@@ -306,48 +335,48 @@ export function AnalysisView({ transcript, audioBlob, audioMeta, tasks, conditio
               className="mt-4 h-9 w-full"
             />
           ) : (
-            <p className="mt-4 rounded-md bg-[#f7f8fc] px-3 py-2 text-xs text-[#68708f]">録音音声はありません。テキスト入力から解析した結果です。</p>
+            <p className="mt-4 rounded-md bg-[#f7f8fc] px-3 py-2 text-xs text-[#68708f]">{t("録音音声はありません。テキスト入力から解析した結果です。", "No audio was recorded. This analysis is based on typed input.")}</p>
           )}
         </section>
 
         <div className="grid gap-3 min-[380px]:grid-cols-2">
           <section className="min-w-0 rounded-lg border border-[#e3e5ef] p-4">
-            <h2 className="text-xs font-bold">文字起こし</h2>
+            <h2 className="text-xs font-bold">{t("文字起こし", "Transcript")}</h2>
             <p className="mt-3 max-h-44 overflow-y-auto whitespace-pre-wrap text-xs leading-6 text-[#3d4563]">{transcript}</p>
           </section>
 
           <section className="min-w-0 rounded-lg border border-[#e3e5ef] p-4">
             <div className="flex items-center justify-between gap-2">
-              <h2 className="text-xs font-bold">負荷シグナル</h2>
-              <span className={`rounded px-2 py-1 text-[10px] font-bold ${condition.level === "high" ? "bg-[#fff0f4] text-[#ef3f71]" : condition.level === "caution" ? "bg-[#fff7e9] text-[#de8a16]" : "bg-[#eaf8f2] text-[#28a477]"}`}>{condition.label}</span>
+              <h2 className="text-xs font-bold">{t("負荷シグナル", "Load signal")}</h2>
+              <span className={`rounded px-2 py-1 text-[10px] font-bold ${condition.level === "high" ? "bg-[#fff0f4] text-[#ef3f71]" : condition.level === "caution" ? "bg-[#fff7e9] text-[#de8a16]" : "bg-[#eaf8f2] text-[#28a477]"}`}>{localizedConditionLabel}</span>
             </div>
             <div className="relative mx-auto mt-6 size-32 rounded-full" style={{ background: `conic-gradient(${gaugeColor} ${score * 3.6}deg, #eceef4 0)` }}>
               <div className="absolute inset-[12px] grid place-items-center rounded-full bg-white">
                 <p className="text-center"><span className="text-3xl font-bold">{score}</span><span className="text-xs">/100</span></p>
               </div>
             </div>
-            <div className="mt-4 flex flex-wrap justify-center gap-x-2 gap-y-1 text-[9px] text-[#737b99]"><span className="text-[#43b98b]">● 低</span><span className="text-[#5870df]">● 通常</span><span className="text-[#f0a62b]">● 注意</span><span className="text-[#ef3f71]">● 高</span></div>
+            <div className="mt-4 flex flex-wrap justify-center gap-x-2 gap-y-1 text-[9px] text-[#737b99]"><span className="text-[#43b98b]">● {t("低", "Low")}</span><span className="text-[#5870df]">● {t("通常", "Normal")}</span><span className="text-[#f0a62b]">● {t("注意", "Elevated")}</span><span className="text-[#ef3f71]">● {t("高", "High")}</span></div>
           </section>
         </div>
         <section className="rounded-lg border border-[#e3e5ef] p-4">
           <div className="flex items-center justify-between gap-3">
-            <h2 className="text-xs font-bold">算出根拠</h2>
+            <h2 className="text-xs font-bold">{t("算出根拠", "How this was calculated")}</h2>
             <span className="text-[10px] font-medium text-[#68708f]">
               {condition.confidence === "standard"
-                ? "自己評価＋個人内音声"
-                : "自己評価中心"}
+                ? t("自己評価＋個人内音声", "Self-report + personal voice baseline")
+                : t("自己評価中心", "Primarily self-report")}
             </span>
           </div>
           <p className="mt-3 text-xs font-semibold leading-5 text-[#343c5b]">
-            {condition.summary}
+            {localizedConditionSummary}
           </p>
           {condition.components ? (
             <div className="mt-4 space-y-3">
               {[
-                ["主観的ワークロード", condition.components.rawTlx],
-                ["眠気", condition.components.sleepiness],
+                [t("主観的ワークロード", "Subjective workload"), condition.components.rawTlx],
+                [t("眠気", "Sleepiness"), condition.components.sleepiness],
                 [
-                  "音声の個人内変化",
+                  t("音声の個人内変化", "Personal voice deviation"),
                   condition.components.voiceDeviation,
                 ],
               ].map(([label, value]) => (
@@ -355,7 +384,7 @@ export function AnalysisView({ transcript, audioBlob, audioMeta, tasks, conditio
                   <div className="flex justify-between gap-3 text-[10px]">
                     <span className="text-[#626b89]">{label}</span>
                     <span className="font-bold tabular-nums text-[#303857]">
-                      {typeof value === "number" ? `${value}/100` : "ベースライン作成中"}
+                      {typeof value === "number" ? `${value}/100` : t("ベースライン作成中", "Building baseline")}
                     </span>
                   </div>
                   <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-[#eceef4]">
@@ -369,46 +398,46 @@ export function AnalysisView({ transcript, audioBlob, audioMeta, tasks, conditio
             </div>
           ) : null}
           <ul className="mt-4 space-y-1 text-[10px] leading-4 text-[#59617d]">
-            {condition.evidence.map((item) => <li key={item}>・{item}</li>)}
+            {localizedEvidence.map((item) => <li key={item}>• {item}</li>)}
           </ul>
           <p className="mt-3 border-t border-[#eceef3] pt-3 text-[9px] leading-4 text-[#8188a1]">
-            {condition.disclaimer}
+            {localizedDisclaimer}
           </p>
         </section>
 
 
 
         <section className="rounded-lg border border-[#e3e5ef] p-4">
-          <h2 className="text-xs font-bold">内容の整理</h2>
+          <h2 className="text-xs font-bold">{t("内容の整理", "Organized notes")}</h2>
           <div className="mt-4 space-y-4">
-            {analysisGroups.map((group) => {
+            {localizedAnalysisGroups.map((group) => {
               const items = groupedTasks[group.id];
               if (!items.length) return null;
               return (
                 <div key={group.id}>
                   <div className="mb-2 flex items-center gap-2">
                     <h3 className={`rounded px-2 py-1 text-[10px] font-bold ${group.style}`}>{group.label}</h3>
-                    <span className="text-[10px] text-[#8188a1]">{items.length}件</span>
+                    <span className="text-[10px] text-[#8188a1]">{items.length}</span>
                   </div>
                   <div className="flex flex-wrap gap-2">
                     {items.map((task) => (
                       <span key={task.id} className="inline-flex max-w-full min-w-0 items-center gap-1.5 rounded-md border border-[#dfe2ec] bg-white px-2 py-1.5 text-xs font-medium text-[#343c5b]">
-                        <span className={`shrink-0 rounded px-1.5 py-0.5 text-[9px] font-bold ${temporalStyles[task.temporalContext]}`}>{temporalLabels[task.temporalContext]}</span>
+                        <span className={`shrink-0 rounded px-1.5 py-0.5 text-[9px] font-bold ${temporalStyles[task.temporalContext]}`}>{localizedTemporalLabels[task.temporalContext]}</span>
                         {task.startTime ? <CalendarDays size={12} className="shrink-0" /> : null}
                         <span className={`min-w-0 break-words ${task.status === "completed" ? "line-through opacity-60" : ""}`}>{task.title}</span>
-                        <span className="shrink-0 text-[9px] text-[#8188a1]">{task.kind === "topic" ? "話題" : taskTypeLabels[task.type]}</span>
+                        <span className="shrink-0 text-[9px] text-[#8188a1]">{task.kind === "topic" ? t("話題", "Topic") : localizedTaskTypeLabels[task.type]}</span>
                       </span>
                     ))}
                   </div>
                 </div>
               );
             })}
-            {!tasks.length ? <p className="text-xs text-[#737b99]">整理できる項目はありませんでした。</p> : null}
+            {!tasks.length ? <p className="text-xs text-[#737b99]">{t("整理できる項目はありませんでした。", "No items were found to organize.")}</p> : null}
           </div>
         </section>
 
         <Button variant="primary" size="lg" fullWidth isDisabled={Boolean(processingStage)} onPress={onCreatePlan} className="h-12 bg-[#5b42ff] text-white">
-          {processingStage ? <LoaderCircle size={18} className="animate-spin" /> : null}{processingStage ?? "明日のプランを作る"}{!processingStage ? <ArrowRight size={18} /> : null}
+          {processingStage ? <LoaderCircle size={18} className="animate-spin" /> : null}{processingStage ?? t("明日のプランを作る", "Create tomorrow's plan")}{!processingStage ? <ArrowRight size={18} /> : null}
         </Button>
       </div>
     </div>

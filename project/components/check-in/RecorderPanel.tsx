@@ -6,6 +6,7 @@ import type { CSSProperties } from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { analyzeAudioBlob } from "@/lib/audio/analyzeAudio";
+import { useI18n } from "@/lib/i18n";
 import type { AudioMeta } from "@/types/echly";
 
 type Props = {
@@ -65,6 +66,7 @@ export function RecorderPanel({
   isPrimaryDisabled = false,
   tone,
 }: Props) {
+  const { t } = useI18n();
   const [isRecording, setIsRecording] = useState(false);
   const [elapsed, setElapsed] = useState(0);
   const recorderRef = useRef<MediaRecorder | null>(null);
@@ -84,7 +86,7 @@ export function RecorderPanel({
 
   async function startRecording() {
     if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === "undefined") {
-      onError("このブラウザでは音声録音を利用できません。テキスト入力を使ってください。");
+      onError(t("このブラウザでは音声録音を利用できません。テキスト入力を使ってください。", "Audio recording is unavailable in this browser. Please type your check-in instead."));
       return;
     }
     try {
@@ -101,7 +103,7 @@ export function RecorderPanel({
         stream.getTracks().forEach((track) => track.stop()); streamRef.current = null; startedAtRef.current = null;
       };
       recorder.start(500); setIsRecording(true);
-    } catch { onError("マイクを開始できませんでした。ブラウザのマイク権限を確認してください。"); }
+    } catch { onError(t("マイクを開始できませんでした。ブラウザのマイク権限を確認してください。", "Could not start the microphone. Check your browser's microphone permission.")); }
   }
 
   function stopRecording() {
@@ -121,16 +123,16 @@ export function RecorderPanel({
       <div className="relative mt-2 grid place-items-center">
         <span className={`absolute size-32 rounded-full ${colors.haloOuter} ${isRecording ? "record-pulse" : ""}`} />
         <span className={`absolute size-24 rounded-full ${colors.haloInner}`} />
-        <Button isIconOnly aria-label={isRecording ? "録音を停止" : "録音を開始"} onPress={isRecording ? stopRecording : startRecording} className={`relative z-10 size-20 rounded-full text-white transition-transform duration-150 ease-out active:scale-[0.97] ${isRecording ? "bg-[#ef476f] shadow-[0_12px_28px_rgba(239,71,111,.24)]" : colors.button}`}>
+        <Button isIconOnly aria-label={isRecording ? t("録音を停止", "Stop recording") : t("録音を開始", "Start recording")} onPress={isRecording ? stopRecording : startRecording} className={`relative z-10 size-20 rounded-full text-white transition-transform duration-150 ease-out active:scale-[0.97] ${isRecording ? "bg-[#ef476f] shadow-[0_12px_28px_rgba(239,71,111,.24)]" : colors.button}`}>
           {isRecording ? <Pause size={28} fill="currentColor" /> : <Mic size={31} />}
         </Button>
       </div>
-      <p className="mt-6 text-sm font-bold">{isRecording ? `${elapsed}秒 ${recordingLabel}` : audioBlob ? recordedLabel : idleLabel}</p>
+      <p className="mt-6 text-sm font-bold">{isRecording ? `${elapsed}${t("秒", "s")} ${recordingLabel}` : audioBlob ? recordedLabel : idleLabel}</p>
       <p className="mt-1 text-xs text-[#68708f]">{durationHint}</p>
       {audioBlob && !isRecording ? (
         <div className="mt-3 flex max-w-full flex-wrap items-center justify-center gap-2">
-          <Tooltip><Tooltip.Trigger><Button isIconOnly size="sm" variant="outline" aria-label="録音を破棄" onPress={onDiscard}><Trash2 size={16} /></Button></Tooltip.Trigger><Tooltip.Content>録音を破棄</Tooltip.Content></Tooltip>
-          <Tooltip><Tooltip.Trigger><Button isIconOnly size="sm" variant="outline" aria-label="もう一度録音" onPress={startRecording}><RotateCcw size={16} /></Button></Tooltip.Trigger><Tooltip.Content>もう一度録音</Tooltip.Content></Tooltip>
+          <Tooltip><Tooltip.Trigger><Button isIconOnly size="sm" variant="outline" aria-label={t("録音を破棄", "Discard recording")} onPress={onDiscard}><Trash2 size={16} /></Button></Tooltip.Trigger><Tooltip.Content>{t("録音を破棄", "Discard recording")}</Tooltip.Content></Tooltip>
+          <Tooltip><Tooltip.Trigger><Button isIconOnly size="sm" variant="outline" aria-label={t("もう一度録音", "Record again")} onPress={startRecording}><RotateCcw size={16} /></Button></Tooltip.Trigger><Tooltip.Content>{t("もう一度録音", "Record again")}</Tooltip.Content></Tooltip>
           <Button size="sm" variant="primary" onPress={onPrimaryAction} isDisabled={isProcessing || isPrimaryDisabled} className={`min-w-20 text-white ${colors.primary}`}>{primaryActionLabel}</Button>
         </div>
       ) : null}

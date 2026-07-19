@@ -4,7 +4,8 @@ import { Button, Label, TextArea, TextField } from "@heroui/react";
 import { Activity, ArrowLeft, Bell, CalendarCheck, Check, FlaskConical, LoaderCircle, MessageSquareText } from "lucide-react";
 import { useState } from "react";
 
-import { SAMPLE_TRANSCRIPT } from "@/lib/demo/sampleCheckIns";
+import { SAMPLE_TRANSCRIPT, SAMPLE_TRANSCRIPT_EN } from "@/lib/demo/sampleCheckIns";
+import { useI18n } from "@/lib/i18n";
 import type { AudioMeta, ConditionSignal, WorkloadSelfReport } from "@/types/echly";
 
 import { RecorderPanel } from "./RecorderPanel";
@@ -123,8 +124,28 @@ const assessmentQuestions: AssessmentQuestion[] = [
   },
 ];
 
+const englishStepContent: typeof stepContent = {
+  1: { ...stepContent[1], title: "Reflect on today", subtitle: "Step 1", prompt: "First, tell us what happened today and what's on your mind.", examples: ["What moved forward", "What felt blocked", "Energy and focus"] },
+  2: { ...stepContent[2], title: "Tomorrow's plans & tasks", subtitle: "Step 2", prompt: "Next, tell us about tomorrow's plans, deadlines, and tasks you may want to adjust.", examples: ["Tomorrow's meetings", "Work to complete", "Fixed commitments"] },
+};
+
+const englishWorkloadOptions = [
+  { label: "Very low", value: 0 }, { label: "Low", value: 25 }, { label: "Moderate", value: 50 }, { label: "High", value: 75 }, { label: "Very high", value: 100 },
+];
+
+const englishAssessmentQuestions: AssessmentQuestion[] = [
+  { key: "mentalDemand", eyebrow: "Mental demand", question: "How mentally demanding was your day?", options: englishWorkloadOptions },
+  { key: "physicalDemand", eyebrow: "Physical demand", question: "How physically demanding was your day?", options: englishWorkloadOptions },
+  { key: "temporalDemand", eyebrow: "Time pressure", question: "How rushed or pressed for time did you feel today?", options: englishWorkloadOptions },
+  { key: "performance", eyebrow: "Performance dissatisfaction", question: "How dissatisfied are you with what you accomplished today?", options: [{ label: "Very satisfied", value: 0 }, { label: "Somewhat satisfied", value: 25 }, { label: "Neutral", value: 50 }, { label: "Somewhat dissatisfied", value: 75 }, { label: "Very dissatisfied", value: 100 }] },
+  { key: "effort", eyebrow: "Effort", question: "How much effort did it take to get through today?", options: englishWorkloadOptions },
+  { key: "frustration", eyebrow: "Frustration", question: "How anxious or frustrated did you feel today?", options: englishWorkloadOptions },
+  { key: "sleepiness", eyebrow: "Current sleepiness", question: "Which option best describes how sleepy you feel now?", options: ["Extremely alert", "Very alert", "Alert", "Fairly alert", "Neither alert nor sleepy", "Somewhat sleepy", "Sleepy, but no difficulty staying awake", "Sleepy and making an effort to stay awake", "Very sleepy and struggling to stay awake"].map((label, index) => ({ label, value: index + 1 })) },
+];
+
 type CheckInViewProps = {
   todayLabel: string;
+  userName: string;
   previousCondition: ConditionSignal | null;
   transcript: string;
   onTranscriptChange: (value: string) => void;
@@ -140,19 +161,24 @@ type CheckInViewProps = {
 };
 
 export function CheckInView(props: CheckInViewProps) {
+  const { isEnglish, t } = useI18n();
   const {
-    todayLabel, previousCondition, transcript, onTranscriptChange, audioByStep, onAudioReady,
+    todayLabel, userName, previousCondition, transcript, onTranscriptChange, audioByStep, onAudioReady,
     onAudioDiscard, selfReport, onSelfReportChange, onAnalyze, onError,
     processingStage, error,
   } = props;
   const [activeStep, setActiveStep] = useState<CheckInStep>(1);
   const [assessmentOpen, setAssessmentOpen] = useState(false);
   const [assessmentIndex, setAssessmentIndex] = useState(0);
-  const currentStep = stepContent[activeStep];
+  const localizedStepContent = isEnglish ? englishStepContent : stepContent;
+  const localizedAssessmentQuestions = isEnglish ? englishAssessmentQuestions : assessmentQuestions;
+  const currentStep = localizedStepContent[activeStep];
   const CurrentIcon = currentStep.icon;
   const currentAudioBlob = audioByStep[activeStep];
-  const assessmentQuestion = assessmentQuestions[assessmentIndex];
+  const assessmentQuestion = localizedAssessmentQuestions[assessmentIndex];
   const completedSteps = ([1, 2] as const).filter((step) => Boolean(audioByStep[step]));
+  const greetingName = userName.trim();
+  const greetingSuffix = !isEnglish && !greetingName.endsWith("さん") ? "さん" : "";
 
   function handlePrimaryRecordingAction() {
     if (activeStep === 1) {
@@ -163,7 +189,7 @@ export function CheckInView(props: CheckInViewProps) {
   }
 
   function startAssessment() {
-    const firstUnanswered = assessmentQuestions.findIndex(
+    const firstUnanswered = localizedAssessmentQuestions.findIndex(
       (question) => !Number.isFinite(selfReport[question.key]),
     );
     setAssessmentIndex(firstUnanswered >= 0 ? firstUnanswered : 0);
@@ -174,7 +200,7 @@ export function CheckInView(props: CheckInViewProps) {
     const nextReport = { ...selfReport, [question.key]: value };
     onSelfReportChange(question.key, value);
 
-    if (assessmentIndex < assessmentQuestions.length - 1) {
+    if (assessmentIndex < localizedAssessmentQuestions.length - 1) {
       setAssessmentIndex((current) => current + 1);
       return;
     }
@@ -191,17 +217,19 @@ export function CheckInView(props: CheckInViewProps) {
   return (
     <div>
       <header className="flex h-16 items-center justify-between border-b border-[#ececf3] px-5 pt-[env(safe-area-inset-top)]">
-        <button type="button" className="flex items-center gap-2 text-lg font-bold" aria-label="Echly ホーム">
+        <button type="button" className="flex items-center gap-2 text-lg font-bold" aria-label={t("Echly ホーム", "Echly home")}>
           <span className="echly-logo" aria-hidden="true"><i /><i /><i /></span>
           Echly
         </button>
-        <button type="button" aria-label="通知" className="grid size-10 place-items-center text-[#555d7d] active:scale-95">
+        <button type="button" aria-label={t("通知", "Notifications")} className="grid size-10 place-items-center text-[#555d7d] active:scale-95">
           <Bell size={20} />
         </button>
       </header>
 
       <div className="px-5 pb-8 pt-5">
-        <h1 className="text-[20px] font-bold leading-7">おつかれさまです、Ryoさん</h1>
+        <h1 className="text-[20px] font-bold leading-7">
+          {isEnglish ? `Welcome back, ${greetingName}` : `おつかれさまです、${greetingName}${greetingSuffix}`}
+        </h1>
         <p className="mt-1 text-xs text-[#606985]">{todayLabel}</p>
 
         <section className="mt-5 flex min-w-0 items-center gap-3 rounded-lg border border-[#e4e6ef] p-4">
@@ -209,9 +237,9 @@ export function CheckInView(props: CheckInViewProps) {
             <Activity size={21} />
           </span>
           <div className="min-w-0">
-            <p className="text-xs font-medium text-[#626b89]">前回の状態</p>
+            <p className="text-xs font-medium text-[#626b89]">{t("前回の状態", "Previous check-in")}</p>
             <p className="mt-1 text-sm font-bold">
-              {previousCondition?.score !== undefined ? `${previousCondition.score}/100・${previousCondition.label}` : "まだ記録がありません"}
+              {previousCondition?.score !== undefined ? `${previousCondition.score}/100 · ${isEnglish ? (previousCondition.level === "high" ? "High" : previousCondition.level === "caution" ? "Elevated" : "Normal") : previousCondition.label}` : t("まだ記録がありません", "No records yet")}
             </p>
           </div>
         </section>
@@ -224,7 +252,7 @@ export function CheckInView(props: CheckInViewProps) {
             <div className="flex items-center justify-between gap-3">
               <div className="min-w-0">
                 <p className="text-[10px] font-bold uppercase tracking-normal text-[#68708f]">Voice check-in</p>
-                <h2 className="mt-1 text-base font-bold text-[#111735]">2ステップで明日を整える</h2>
+                <h2 className="mt-1 text-base font-bold text-[#111735]">{t("2ステップで明日を整える", "Plan tomorrow in two steps")}</h2>
               </div>
               <span className="shrink-0 rounded-md bg-[#f2f4fa] px-2.5 py-1 text-[10px] font-bold text-[#5e6683]">
                 {activeStep}/2
@@ -300,37 +328,37 @@ export function CheckInView(props: CheckInViewProps) {
           onError={onError}
           onPrimaryAction={handlePrimaryRecordingAction}
           isProcessing={Boolean(processingStage)}
-          idleLabel={`${currentStep.title}を録音`}
-          recordingLabel="録音中"
-          recordedLabel={`${currentStep.title}を録音できました`}
+          idleLabel={isEnglish ? `Record ${currentStep.title.toLowerCase()}` : `${currentStep.title}を録音`}
+          recordingLabel={t("録音中", "Recording")}
+          recordedLabel={isEnglish ? `${currentStep.title} recorded` : `${currentStep.title}を録音できました`}
           isPrimaryDisabled={
             activeStep === 2 &&
             (!audioByStep[1] || !audioByStep[2])
           }
-          durationHint={activeStep === 1 ? "目安：30秒〜1分" : "目安：30秒〜2分"}
-          primaryActionLabel={activeStep === 1 ? "Step2へ" : "自己評価へ"}
+          durationHint={activeStep === 1 ? t("目安：30秒〜1分", "About 30 sec–1 min") : t("目安：30秒〜2分", "About 30 sec–2 min")}
+          primaryActionLabel={activeStep === 1 ? t("Step2へ", "Go to Step 2") : t("自己評価へ", "Self-assessment")}
           tone={currentStep.tone}
         />
 
         <details className="group mt-5 rounded-lg border border-[#e7e8f0] bg-white">
           <summary className="flex cursor-pointer list-none items-center justify-center gap-2 px-4 py-3 text-xs font-medium text-[#5e6683] [&::-webkit-details-marker]:hidden">
-            <FlaskConical size={14} /> テキストで入力
+            <FlaskConical size={14} /> {t("テキストで入力", "Type instead")}
           </summary>
           <div className="border-t border-[#ececf3] p-3">
             <TextField fullWidth className="w-full">
-              <Label className="sr-only">チェックイン内容</Label>
-              <TextArea value={transcript} onInput={(event) => onTranscriptChange(event.currentTarget.value)} rows={5} fullWidth placeholder={"Step1: 今日の振り返り\nStep2: 明日の予定・タスク"} className="min-h-32 w-full resize-none rounded-md border border-[#dfe2ec] bg-white px-3 py-2 text-sm leading-6 text-[#27304d] outline-none focus:border-[#6d58ff] focus:ring-2 focus:ring-[#ded9ff]" />
+              <Label className="sr-only">{t("チェックイン内容", "Check-in details")}</Label>
+              <TextArea value={transcript} onInput={(event) => onTranscriptChange(event.currentTarget.value)} rows={5} fullWidth placeholder={t("Step1: 今日の振り返り\nStep2: 明日の予定・タスク", "Step 1: Reflect on today\nStep 2: Tomorrow's plans and tasks")} className="min-h-32 w-full resize-none rounded-md border border-[#dfe2ec] bg-white px-3 py-2 text-sm leading-6 text-[#27304d] outline-none focus:border-[#6d58ff] focus:ring-2 focus:ring-[#ded9ff]" />
             </TextField>
             <div className="mt-2 flex flex-wrap gap-2">
-              <Button size="sm" variant="ghost" onPress={() => onTranscriptChange(SAMPLE_TRANSCRIPT)} className="min-w-0">デモ文を入力</Button>
-              <Button size="sm" variant="primary" isDisabled={!transcript.trim() || Boolean(processingStage)} onPress={startAssessment} className="ml-auto min-w-20 bg-[#5b42ff] text-white">自己評価へ</Button>
+              <Button size="sm" variant="ghost" onPress={() => onTranscriptChange(isEnglish ? SAMPLE_TRANSCRIPT_EN : SAMPLE_TRANSCRIPT)} className="min-w-0">{t("デモ文を入力", "Use sample text")}</Button>
+              <Button size="sm" variant="primary" isDisabled={!transcript.trim() || Boolean(processingStage)} onPress={startAssessment} className="ml-auto min-w-20 bg-[#5b42ff] text-white">{t("自己評価へ", "Self-assessment")}</Button>
             </div>
           </div>
         </details>
 
         <aside className="mt-5 rounded-lg border border-[#e4e6ef] px-4 py-3.5">
-          <p className="text-xs font-bold text-[#6653d9]">ヒント</p>
-          <p className="mt-1 text-xs leading-5 text-[#505975]">うまく話そうとしなくて大丈夫。思ったまま話してください。</p>
+          <p className="text-xs font-bold text-[#6653d9]">{t("ヒント", "Tip")}</p>
+          <p className="mt-1 text-xs leading-5 text-[#505975]">{t("うまく話そうとしなくて大丈夫。思ったまま話してください。", "You don't need to phrase it perfectly. Just speak naturally.")}</p>
         </aside>
       </div>
 
@@ -340,7 +368,7 @@ export function CheckInView(props: CheckInViewProps) {
             <header className="grid h-16 grid-cols-[44px_1fr_44px] items-center">
               <button
                 type="button"
-                aria-label={assessmentIndex === 0 ? "自己評価を閉じる" : "前の質問に戻る"}
+                aria-label={assessmentIndex === 0 ? t("自己評価を閉じる", "Close self-assessment") : t("前の質問に戻る", "Previous question")}
                 onClick={() => {
                   if (processingStage) return;
                   if (assessmentIndex === 0) setAssessmentOpen(false);
@@ -351,11 +379,11 @@ export function CheckInView(props: CheckInViewProps) {
               >
                 <ArrowLeft size={21} />
               </button>
-              <p className="text-center text-sm font-bold text-[#303857]">今日の負荷を確認</p>
+              <p className="text-center text-sm font-bold text-[#303857]">{t("今日の負荷を確認", "Review today's load")}</p>
             </header>
 
             <div className="mt-3 flex gap-1.5" aria-hidden="true">
-              {assessmentQuestions.map((question, index) => (
+              {localizedAssessmentQuestions.map((question, index) => (
                 <span key={question.key} className="h-1.5 flex-1 overflow-hidden rounded-full bg-[#e8eaf2]">
                   <span className={`block h-full rounded-full bg-[#5b42ff] transition-transform duration-200 ${index <= assessmentIndex ? "translate-x-0" : "-translate-x-full"}`} />
                 </span>
@@ -367,14 +395,14 @@ export function CheckInView(props: CheckInViewProps) {
                 <span className="grid size-20 place-items-center rounded-full bg-[#efedff] text-[#5b42ff]">
                   <LoaderCircle size={34} className="animate-spin" />
                 </span>
-                <h2 className="mt-6 text-xl font-bold text-[#111735]">回答をもとに解析中</h2>
+                <h2 className="mt-6 text-xl font-bold text-[#111735]">{t("回答をもとに解析中", "Analyzing your answers")}</h2>
                 <p className="mt-2 text-sm text-[#68708f]">{processingStage}</p>
               </div>
             ) : (
               <main className="flex flex-1 flex-col py-7">
                 <div className="flex items-center justify-between gap-3">
                   <p className="text-xs font-bold text-[#5b42ff]">{assessmentQuestion.eyebrow}</p>
-                  <p className="text-xs font-bold tabular-nums text-[#7b829c]">{assessmentIndex + 1} / {assessmentQuestions.length}</p>
+                  <p className="text-xs font-bold tabular-nums text-[#7b829c]">{assessmentIndex + 1} / {localizedAssessmentQuestions.length}</p>
                 </div>
                 <h1 className="mt-5 text-[24px] font-bold leading-9 text-[#111735]">{assessmentQuestion.question}</h1>
                 <div
