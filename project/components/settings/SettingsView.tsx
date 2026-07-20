@@ -11,8 +11,6 @@ import { useI18n } from "@/lib/i18n";
 
 type Props = {
   user: { name: string; email: string; image?: string | null };
-  saveTranscript: boolean;
-  onSaveTranscriptChange: (value: boolean) => void;
   timeZone: string;
   deviceTimeZone: string;
   debugTimeZone: string | null;
@@ -41,8 +39,6 @@ function Row({ icon: Icon, title, description, action }: { icon?: typeof Calenda
 
 export function SettingsView({
   user,
-  saveTranscript,
-  onSaveTranscriptChange,
   timeZone,
   deviceTimeZone,
   debugTimeZone,
@@ -97,7 +93,7 @@ export function SettingsView({
         <section><h2 className="mb-2 text-xs font-bold text-[#4e3ad0]">{t("安全と権限", "Safety & permissions")}</h2><div className="divide-y divide-[#ececf3] rounded-lg border border-[#e3e5ef]">
           <div className="flex min-w-0 items-center gap-3 px-3 py-3"><ShieldCheck size={18} className="shrink-0 text-[#4d5a84]" /><div className="min-w-0 flex-1"><p className="break-words text-xs font-bold">{t("カレンダー変更は必ず確認", "Always review calendar changes")}</p><p className="mt-1 break-words text-[10px] text-[#727a97]">{t("承認なしでは実行しません", "Nothing runs without your approval")}</p></div><Switch isSelected onChange={() => undefined} size="sm" className="shrink-0"><Switch.Content><Switch.Control><Switch.Thumb /></Switch.Control></Switch.Content></Switch></div>
           <div className="flex min-w-0 items-center gap-3 px-3 py-3"><Mail size={18} className="shrink-0 text-[#4d5a84]" /><div className="min-w-0 flex-1"><p className="break-words text-xs font-bold">{t("メールは下書き保存のみ", "Save emails as drafts only")}</p><p className="mt-1 break-words text-[10px] text-[#727a97]">{t("送信はしません", "Echly never sends them")}</p></div><Switch isSelected onChange={() => undefined} size="sm" className="shrink-0"><Switch.Content><Switch.Control><Switch.Thumb /></Switch.Control></Switch.Content></Switch></div>
-          <div className="flex min-w-0 items-center gap-3 px-3 py-3"><Database size={18} className="shrink-0 text-[#4d5a84]" /><div className="min-w-0 flex-1"><p className="break-words text-xs font-bold">{t("文字起こしを履歴に保存", "Save transcripts to history")}</p><p className="mt-1 break-words text-[10px] text-[#727a97]">{t("オフなら承認結果だけ保存", "When off, only approved results are saved")}</p></div><Switch isSelected={saveTranscript} onChange={onSaveTranscriptChange} size="sm" className="shrink-0"><Switch.Content><Switch.Control><Switch.Thumb /></Switch.Control></Switch.Content></Switch></div>
+          <div className="flex min-w-0 items-center gap-3 px-3 py-3"><Database size={18} className="shrink-0 text-[#4d5a84]" /><div className="min-w-0 flex-1"><p className="break-words text-xs font-bold">{t("文字起こしを履歴に保存", "Save transcripts to history")}</p><p className="mt-1 break-words text-[10px] text-[#727a97]">{t("振り返りと予定・タスクの文字起こしを保存", "Reflection and planning/task transcripts are saved")}</p></div><span className="rounded bg-[#eaf8f2] px-2 py-1 text-[9px] font-bold text-[#23775d]">{t("有効", "On")}</span></div>
         </div></section>
 
         <section>

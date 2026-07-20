@@ -42,6 +42,7 @@ import type {
   CheckIn,
   ConditionSignal,
   ExtractedTask,
+  HistoryTranscriptEntry,
   ScheduleEntry,
   TranscriptReview,
   TomorrowPlan,
@@ -69,6 +70,7 @@ type AudioByMode = Record<CheckInMode, ModeAudio>;
 
 type WorkspaceData = {
   history: CheckIn[];
+  historyTranscripts: HistoryTranscriptEntry[];
   scheduleEntries: ScheduleEntry[];
   preferences: { saveTranscript: boolean };
 };
@@ -224,6 +226,7 @@ function isValidTimeZone(value: string | null): value is string {
 type EchlyAppProps = {
   todayLabel: string;
   initialView?: WorkspaceView;
+  initialHistoryId?: string | null;
 };
 
 const WORKSPACE_VIEWS: WorkspaceView[] = [
@@ -245,15 +248,25 @@ function workspaceViewFromHistoryState(value: unknown): WorkspaceView | null {
 
 function workspaceViewFromPathname(pathname: string): WorkspaceView | null {
   const match = pathname.match(
-    /^\/(?:jp-ja|us-en)(?:\/(analysis|plan(?:\/approval)?|history|setting))?\/?$/,
+    /^\/(?:jp-ja|us-en)(?:\/(analysis|plan(?:\/approval)?|history(?:\/[^/]+)?|setting))?\/?$/,
   );
   if (!match) return null;
   if (!match[1]) return "checkin";
   if (match[1] === "analysis") return "analysis";
   if (match[1] === "plan") return "plan";
   if (match[1] === "plan/approval") return "approval";
-  if (match[1] === "history") return "history";
+  if (match[1]?.startsWith("history")) return "history";
   return "settings";
+}
+
+function historyIdFromPathname(pathname: string) {
+  const match = pathname.match(/^\/(?:jp-ja|us-en)\/history\/([^/]+)\/?$/);
+  if (!match) return null;
+  try {
+    return decodeURIComponent(match[1]);
+  } catch {
+    return null;
+  }
 }
 
 function workspacePath(localePath: string, view: WorkspaceView) {
@@ -266,6 +279,7 @@ function workspacePath(localePath: string, view: WorkspaceView) {
 export function EchlyApp({
   todayLabel: serverTodayLabel,
   initialView = "checkin",
+  initialHistoryId = null,
 }: EchlyAppProps) {
   const { isEnglish, t } = useI18n();
   const { data: session, isPending: isSessionPending } = authClient.useSession();
@@ -290,11 +304,12 @@ export function EchlyApp({
     useState<WorkloadSelfReport | null>(null);
   const [appliedActionIds, setAppliedActionIds] = useState<string[]>([]);
   const [history, setHistory] = useState<CheckIn[]>([]);
+  const [historyTranscripts, setHistoryTranscripts] = useState<HistoryTranscriptEntry[]>([]);
+  const [selectedHistoryId, setSelectedHistoryId] = useState<string | null>(initialHistoryId);
   const [scheduleEntries, setScheduleEntries] = useState<ScheduleEntry[]>([]);
   const [storageLoaded, setStorageLoaded] = useState(false);
   const [zonedNow, setZonedNow] = useState<ZonedNow | null>(null);
   const [debugTimeZone, setDebugTimeZone] = useState<string | null>(null);
-  const [saveTranscript, setSaveTranscript] = useState(true);
   const [tabsPreloaded, setTabsPreloaded] = useState(false);
   const checkInWriteQueueRef = useRef<Promise<void>>(Promise.resolve());
 
@@ -326,6 +341,7 @@ export function EchlyApp({
     let cancelled = false;
     const resetStateId = window.setTimeout(() => {
       setHistory([]);
+      setHistoryTranscripts([]);
       setScheduleEntries([]);
       setStorageLoaded(false);
     }, 0);
@@ -382,10 +398,40 @@ export function EchlyApp({
 
         const mergedHistory = [...historyById.values()]
           .sort((left, right) => right.createdAt.localeCompare(left.createdAt))
-          .slice(0, 30);
+          .slice(0, 365);
         const mergedSchedules = [...schedulesById.values()]
           .sort((left, right) => right.createdAt.localeCompare(left.createdAt))
           .slice(0, 60);
+        const historyTranscriptsById = new Map(
+          workspace.historyTranscripts.map((entry) => [entry.id, entry]),
+        );
+        for (const checkIn of mergedHistory) {
+          if (historyTranscriptsById.has(checkIn.id)) continue;
+          historyTranscriptsById.set(checkIn.id, {
+            id: checkIn.id,
+            createdAt: checkIn.createdAt,
+            localDate: checkIn.localDate ?? checkIn.createdAt.slice(0, 10),
+            timeZone: checkIn.timeZone,
+            kind: "reflection",
+            transcript: checkIn.transcript,
+            tasks: checkIn.tasks,
+          });
+        }
+        for (const entry of mergedSchedules) {
+          if (historyTranscriptsById.has(entry.id)) continue;
+          historyTranscriptsById.set(entry.id, {
+            id: entry.id,
+            createdAt: entry.createdAt,
+            localDate: entry.localDate ?? entry.createdAt.slice(0, 10),
+            timeZone: entry.timeZone,
+            kind: "planning",
+            transcript: entry.transcript,
+            tasks: entry.tasks,
+          });
+        }
+        const mergedHistoryTranscripts = [...historyTranscriptsById.values()]
+          .sort((left, right) => right.createdAt.localeCompare(left.createdAt))
+          .slice(0, 730);
 
         if (hasLegacyData) {
           try {
@@ -415,8 +461,8 @@ export function EchlyApp({
 
         if (!cancelled) {
           setHistory(mergedHistory);
+          setHistoryTranscripts(mergedHistoryTranscripts);
           setScheduleEntries(mergedSchedules);
-          setSaveTranscript(workspace.preferences.saveTranscript);
         }
       } catch (caught) {
         if (!cancelled) {
@@ -446,6 +492,7 @@ export function EchlyApp({
 
   useEffect(() => {
     const handlePopState = (event: PopStateEvent) => {
+      setSelectedHistoryId(historyIdFromPathname(window.location.pathname));
       setView(
         workspaceViewFromPathname(window.location.pathname)
           ?? workspaceViewFromHistoryState(event.state)
@@ -587,7 +634,26 @@ export function EchlyApp({
           (checkIn.localDate === undefined ||
             item.localDate !== checkIn.localDate),
       ),
-    ].slice(0, 30));
+    ].slice(0, 365));
+    setHistoryTranscripts((current) => [
+      {
+        id: checkIn.id,
+        createdAt: checkIn.createdAt,
+        localDate: checkIn.localDate ?? checkIn.createdAt.slice(0, 10),
+        timeZone: checkIn.timeZone,
+        kind: "reflection" as const,
+        transcript: checkIn.transcript,
+        tasks: checkIn.tasks,
+      },
+      ...current.filter(
+        (entry) =>
+          entry.id !== checkIn.id &&
+          !(
+            entry.kind === "reflection" &&
+            entry.localDate === (checkIn.localDate ?? checkIn.createdAt.slice(0, 10))
+          ),
+      ),
+    ].slice(0, 730));
   }
 
   function replaceScheduleEntry(scheduleEntry: ScheduleEntry) {
@@ -595,6 +661,18 @@ export function EchlyApp({
       scheduleEntry,
       ...current.filter((item) => item.id !== scheduleEntry.id),
     ].slice(0, 60));
+    setHistoryTranscripts((current) => [
+      {
+        id: scheduleEntry.id,
+        createdAt: scheduleEntry.createdAt,
+        localDate: scheduleEntry.localDate ?? scheduleEntry.createdAt.slice(0, 10),
+        timeZone: scheduleEntry.timeZone,
+        kind: "planning" as const,
+        transcript: scheduleEntry.transcript,
+        tasks: scheduleEntry.tasks,
+      },
+      ...current.filter((entry) => entry.id !== scheduleEntry.id),
+    ].slice(0, 730));
   }
 
   async function saveCheckInRecord(checkIn: CheckIn) {
@@ -628,15 +706,6 @@ export function EchlyApp({
       method: "DELETE",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ id }),
-    });
-    await parseApiResponse(response, isEnglish);
-  }
-
-  async function savePreferences(nextSaveTranscript: boolean) {
-    const response = await fetch("/api/workspace/preferences", {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ saveTranscript: nextSaveTranscript }),
     });
     await parseApiResponse(response, isEnglish);
   }
@@ -957,9 +1026,7 @@ export function EchlyApp({
         createdAt: new Date().toISOString(),
         localDate,
         timeZone: zonedNow.timeZone,
-        transcript: saveTranscript
-          ? resolvedTranscript
-          : t("文字起こしは保存しない設定です。", "Transcript storage is turned off."),
+        transcript: resolvedTranscript,
         audioMeta: resolvedAudioMeta,
         condition: result.condition,
         tasks: result.tasks,
@@ -992,7 +1059,7 @@ export function EchlyApp({
   }
 
   async function handleAddSchedule(confirmedTranscript?: string) {
-    if (!zonedNow || !tomorrowDate) {
+    if (!zonedNow || !localDate || !tomorrowDate) {
       setError(
         "端末のタイムゾーンを確認中です。少し待ってからもう一度お試しください。",
       );
@@ -1055,6 +1122,8 @@ export function EchlyApp({
       const entry: ScheduleEntry = {
         id: entryId,
         createdAt: new Date().toISOString(),
+        localDate,
+        timeZone: zonedNow.timeZone,
         targetDate: tomorrowDate,
         transcript: resolvedTranscript,
         audioMeta: resolvedAudioMeta,
@@ -1264,21 +1333,6 @@ export function EchlyApp({
     }
   }
 
-  function handleSaveTranscriptChange(nextValue: boolean) {
-    const previousValue = saveTranscript;
-    setSaveTranscript(nextValue);
-    void savePreferences(nextValue).catch((caught) => {
-      setSaveTranscript(previousValue);
-      setError(
-        caught instanceof Error
-          ? caught.message
-          : isEnglish
-            ? "The setting could not be saved."
-            : "設定を保存できませんでした。",
-      );
-    });
-  }
-
   function startNewCheckIn() {
     setSelfReport({});
     setTranscriptByMode({ reflection: "", planning: "" });
@@ -1298,7 +1352,7 @@ export function EchlyApp({
   }
 
   function handleWorkspaceViewChange(nextView: WorkspaceView) {
-    if (nextView === view) return;
+    if (nextView === view && !(nextView === "history" && selectedHistoryId)) return;
     const localePath = isEnglish ? "/us-en" : "/jp-ja";
     const nextPath = workspacePath(localePath, nextView);
     window.history.replaceState(
@@ -1311,7 +1365,31 @@ export function EchlyApp({
       "",
       nextPath,
     );
+    setSelectedHistoryId(null);
     setView(nextView);
+  }
+
+  function handleHistorySelect(id: string) {
+    const localePath = isEnglish ? "/us-en" : "/jp-ja";
+    window.history.pushState(
+      { ...window.history.state, echlyView: "history", echlyHistoryId: id },
+      "",
+      `${localePath}/history/${encodeURIComponent(id)}`,
+    );
+    setSelectedHistoryId(id);
+    setView("history");
+    window.scrollTo({ top: 0, behavior: "auto" });
+  }
+
+  function handleHistoryBack() {
+    const localePath = isEnglish ? "/us-en" : "/jp-ja";
+    window.history.pushState(
+      { ...window.history.state, echlyView: "history" },
+      "",
+      `${localePath}/history`,
+    );
+    setSelectedHistoryId(null);
+    window.scrollTo({ top: 0, behavior: "auto" });
   }
 
   function renderView(targetView: WorkspaceView) {
@@ -1372,7 +1450,17 @@ export function EchlyApp({
     }
 
     if (targetView === "history") {
-      return <HistoryView checkIns={history} onNewCheckIn={startNewCheckIn} />;
+      return (
+        <HistoryView
+          checkIns={history}
+          historyTranscripts={historyTranscripts}
+          selectedHistoryId={selectedHistoryId}
+          storageLoaded={storageLoaded}
+          onHistoryBack={handleHistoryBack}
+          onHistorySelect={handleHistorySelect}
+          onNewCheckIn={startNewCheckIn}
+        />
+      );
     }
 
     if (targetView === "settings") {
@@ -1383,8 +1471,6 @@ export function EchlyApp({
             email: signedInUser.email,
             image: signedInUser.image,
           }}
-          saveTranscript={saveTranscript}
-          onSaveTranscriptChange={handleSaveTranscriptChange}
           timeZone={zonedNow?.timeZone ?? resolveBrowserTimeZone()}
           deviceTimeZone={resolveBrowserTimeZone()}
           debugTimeZone={debugTimeZone}

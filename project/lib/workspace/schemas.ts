@@ -45,11 +45,23 @@ export const CheckInRecordSchema = z.object({
 export const ScheduleEntryRecordSchema = z.object({
   id: z.string().min(1).max(200),
   createdAt: z.string().datetime(),
+  localDate: z.string().min(1).max(20).optional(),
+  timeZone: z.string().min(1).max(100).optional(),
   targetDate: z.string().min(1).max(20),
   transcript: z.string().max(12000),
   audioMeta: AudioMetaSchema,
   tasks: z.array(PersistedExtractedTaskSchema).min(1).max(100),
   source: z.enum(["cloudflare", "demo"]),
+});
+
+export const HistoryTranscriptEntrySchema = z.object({
+  id: z.string().min(1).max(200),
+  createdAt: z.string().datetime(),
+  localDate: z.string().min(1).max(20),
+  timeZone: z.string().min(1).max(100).optional(),
+  kind: z.enum(["reflection", "planning"]),
+  transcript: z.string().max(12000),
+  tasks: z.array(PersistedExtractedTaskSchema).max(100),
 });
 
 export const WorkspacePreferencesSchema = z.object({

@@ -2,7 +2,7 @@
 
 import { createContext, type ReactNode, useContext, useEffect } from "react";
 
-import type { AppLocale } from "@/lib/i18n-config";
+import { LOCALE_COOKIE_NAME, type AppLocale } from "@/lib/i18n-config";
 
 type I18nValue = {
   locale: AppLocale;
@@ -17,7 +17,8 @@ export function I18nProvider({ locale, children }: { locale: AppLocale; children
 
   useEffect(() => {
     document.documentElement.lang = isEnglish ? "en-US" : "ja-JP";
-  }, [isEnglish]);
+    document.cookie = `${LOCALE_COOKIE_NAME}=${locale}; Path=/; Max-Age=31536000; SameSite=Lax`;
+  }, [isEnglish, locale]);
 
   return (
     <I18nContext.Provider value={{ locale, isEnglish, t: (japanese, english) => isEnglish ? english : japanese }}>

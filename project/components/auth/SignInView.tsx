@@ -1,13 +1,17 @@
 "use client";
 
 import { Button } from "@heroui/react";
-import { LoaderCircle, Mic, ShieldCheck } from "lucide-react";
-import { type FormEvent, useState } from "react";
+import { Languages, LoaderCircle, Mic, ShieldCheck } from "lucide-react";
+import Link from "next/link";
+import { type FormEvent, useState, useSyncExternalStore } from "react";
+import { createPortal } from "react-dom";
 
 import { authClient } from "@/lib/auth-client";
 import { useI18n } from "@/lib/i18n";
 
 type AuthMode = "signIn" | "signUp";
+
+const subscribeToClient = () => () => undefined;
 
 function GoogleMark() {
   return (
@@ -39,6 +43,11 @@ function authErrorMessage(code: string | undefined, isEnglish: boolean) {
 
 export function SignInView() {
   const { locale, isEnglish, t } = useI18n();
+  const canUsePortal = useSyncExternalStore(
+    subscribeToClient,
+    () => true,
+    () => false,
+  );
   const [mode, setMode] = useState<AuthMode>("signIn");
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
@@ -116,8 +125,41 @@ export function SignInView() {
 
   const isPending = pendingAction !== null;
 
+  const languageSwitcher = (
+    <nav
+      aria-label={t("表示言語", "Display language")}
+      className="flex items-center gap-1 rounded-xl border border-[#e1e3ed] bg-white p-1 shadow-sm"
+      style={{
+        position: "fixed",
+        top: "max(1rem, env(safe-area-inset-top))",
+        right: "max(1rem, env(safe-area-inset-right))",
+        zIndex: 100,
+      }}
+    >
+      <Languages size={16} className="ml-2 text-[#68708f]" aria-hidden="true" />
+      <Link
+        href="/jp-ja"
+        hrefLang="ja"
+        aria-current={locale === "jp-ja" ? "page" : undefined}
+        className={`rounded-lg px-2.5 py-1.5 text-xs font-semibold transition-colors ${locale === "jp-ja" ? "bg-[#edeaff] text-[#4e3ad0]" : "text-[#68708f] hover:bg-[#f5f6fa] hover:text-[#31384f]"}`}
+      >
+        日本語
+      </Link>
+      <Link
+        href="/us-en"
+        hrefLang="en"
+        aria-current={locale === "us-en" ? "page" : undefined}
+        className={`rounded-lg px-2.5 py-1.5 text-xs font-semibold transition-colors ${locale === "us-en" ? "bg-[#edeaff] text-[#4e3ad0]" : "text-[#68708f] hover:bg-[#f5f6fa] hover:text-[#31384f]"}`}
+      >
+        English
+      </Link>
+    </nav>
+  );
+
   return (
-    <main className="grid min-h-dvh place-items-center bg-[#f7f8fc] px-5 py-10 text-[#111735]">
+    <>
+      {canUsePortal ? createPortal(languageSwitcher, document.body) : null}
+      <main className="grid min-h-dvh place-items-center bg-[#f7f8fc] px-5 py-20 text-[#111735]">
       <section className="w-full max-w-sm rounded-3xl border border-[#e5e7f1] bg-white px-6 py-8 text-center shadow-[0_20px_60px_rgba(27,35,83,0.08)]">
         <span className="mx-auto grid size-14 place-items-center rounded-2xl bg-[#edeaff] text-[#5b42ff]">
           <Mic size={27} />
@@ -181,6 +223,7 @@ export function SignInView() {
           {t("認証情報は暗号化・ハッシュ化して安全に扱われます", "Your credentials are encrypted and securely hashed")}
         </p>
       </section>
-    </main>
+      </main>
+    </>
   );
 }

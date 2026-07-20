@@ -168,11 +168,23 @@ export type AnalysisResult = {
 export type ScheduleEntry = {
   id: string;
   createdAt: string;
+  localDate?: string;
+  timeZone?: string;
   targetDate: string;
   transcript: string;
   audioMeta: AudioMeta;
   tasks: ExtractedTask[];
   source: "cloudflare" | "demo";
+};
+
+export type HistoryTranscriptEntry = {
+  id: string;
+  createdAt: string;
+  localDate: string;
+  timeZone?: string;
+  kind: "reflection" | "planning";
+  transcript: string;
+  tasks: ExtractedTask[];
 };
 
 export type ApprovalStatus =

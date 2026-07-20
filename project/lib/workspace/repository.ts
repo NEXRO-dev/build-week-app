@@ -1,9 +1,10 @@
 import { database, ensureEchlySchema } from "@/lib/database";
 import {
   CheckInRecordSchema,
+  HistoryTranscriptEntrySchema,
   ScheduleEntryRecordSchema,
 } from "@/lib/workspace/schemas";
-import type { CheckIn, ScheduleEntry } from "@/types/echly";
+import type { CheckIn, HistoryTranscriptEntry, ScheduleEntry } from "@/types/echly";
 
 function parseCheckIn(payload: string): CheckIn | null {
   try {
@@ -26,13 +27,13 @@ function parseScheduleEntry(payload: string): ScheduleEntry | null {
 export async function loadWorkspace(userId: string) {
   await ensureEchlySchema();
 
-  const [checkInRows, scheduleRows, preferences] = await Promise.all([
+  const [checkInRows, scheduleRows, historyTranscriptRows, preferences] = await Promise.all([
     database
       .selectFrom("echly_check_ins")
       .select("payload")
       .where("user_id", "=", userId)
       .orderBy("created_at", "desc")
-      .limit(30)
+      .limit(365)
       .execute(),
     database
       .selectFrom("echly_schedule_entries")
@@ -40,6 +41,21 @@ export async function loadWorkspace(userId: string) {
       .where("user_id", "=", userId)
       .orderBy("created_at", "desc")
       .limit(60)
+      .execute(),
+    database
+      .selectFrom("echly_history_transcripts")
+      .select([
+        "id",
+        "local_date",
+        "time_zone",
+        "kind",
+        "transcript",
+        "tasks_json",
+        "created_at",
+      ])
+      .where("user_id", "=", userId)
+      .orderBy("created_at", "desc")
+      .limit(730)
       .execute(),
     database
       .selectFrom("echly_user_preferences")
@@ -55,10 +71,60 @@ export async function loadWorkspace(userId: string) {
     scheduleEntries: scheduleRows
       .map((row) => parseScheduleEntry(row.payload))
       .filter((value): value is ScheduleEntry => value !== null),
+    historyTranscripts: historyTranscriptRows
+      .map((row) => {
+        try {
+          const parsed = HistoryTranscriptEntrySchema.safeParse({
+            id: row.id,
+            createdAt: row.created_at,
+            localDate: row.local_date,
+            timeZone: row.time_zone ?? undefined,
+            kind: row.kind,
+            transcript: row.transcript,
+            tasks: JSON.parse(row.tasks_json),
+          });
+          return parsed.success ? parsed.data : null;
+        } catch {
+          return null;
+        }
+      })
+      .filter((value): value is HistoryTranscriptEntry => value !== null),
     preferences: {
       saveTranscript: preferences ? preferences.save_transcript === 1 : true,
     },
   };
+}
+
+async function upsertHistoryTranscript(
+  userId: string,
+  entry: HistoryTranscriptEntry,
+) {
+  const updatedAt = new Date().toISOString();
+  await database
+    .insertInto("echly_history_transcripts")
+    .values({
+      user_id: userId,
+      id: entry.id,
+      local_date: entry.localDate,
+      time_zone: entry.timeZone ?? null,
+      kind: entry.kind,
+      transcript: entry.transcript,
+      tasks_json: JSON.stringify(entry.tasks),
+      created_at: entry.createdAt,
+      updated_at: updatedAt,
+    })
+    .onConflict((conflict) =>
+      conflict.columns(["user_id", "id"]).doUpdateSet({
+        local_date: entry.localDate,
+        time_zone: entry.timeZone ?? null,
+        kind: entry.kind,
+        transcript: entry.transcript,
+        tasks_json: JSON.stringify(entry.tasks),
+        created_at: entry.createdAt,
+        updated_at: updatedAt,
+      }),
+    )
+    .execute();
 }
 
 export async function upsertCheckIn(userId: string, checkIn: CheckIn) {
@@ -71,6 +137,13 @@ export async function upsertCheckIn(userId: string, checkIn: CheckIn) {
         .deleteFrom("echly_check_ins")
         .where("user_id", "=", userId)
         .where("local_date", "=", checkIn.localDate)
+        .where("id", "!=", checkIn.id)
+        .execute();
+      await transaction
+        .deleteFrom("echly_history_transcripts")
+        .where("user_id", "=", userId)
+        .where("local_date", "=", checkIn.localDate)
+        .where("kind", "=", "reflection")
         .where("id", "!=", checkIn.id)
         .execute();
     }
@@ -94,6 +167,16 @@ export async function upsertCheckIn(userId: string, checkIn: CheckIn) {
         }),
       )
       .execute();
+  });
+
+  await upsertHistoryTranscript(userId, {
+    id: checkIn.id,
+    createdAt: checkIn.createdAt,
+    localDate: checkIn.localDate ?? checkIn.createdAt.slice(0, 10),
+    timeZone: checkIn.timeZone,
+    kind: "reflection",
+    transcript: checkIn.transcript,
+    tasks: checkIn.tasks,
   });
 }
 
@@ -123,6 +206,16 @@ export async function upsertScheduleEntry(
       }),
     )
     .execute();
+
+  await upsertHistoryTranscript(userId, {
+    id: scheduleEntry.id,
+    createdAt: scheduleEntry.createdAt,
+    localDate: scheduleEntry.localDate ?? scheduleEntry.createdAt.slice(0, 10),
+    timeZone: scheduleEntry.timeZone,
+    kind: "planning",
+    transcript: scheduleEntry.transcript,
+    tasks: scheduleEntry.tasks,
+  });
 }
 
 export async function deleteScheduleEntry(userId: string, id: string) {

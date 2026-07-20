@@ -9,6 +9,7 @@ import type { WorkspaceView } from "@/types/echly";
 export async function renderLocaleWorkspace(
   locale: string,
   initialView: WorkspaceView,
+  initialHistoryId: string | null = null,
 ) {
   if (!isAppLocale(locale)) notFound();
 
@@ -24,7 +25,11 @@ export async function renderLocaleWorkspace(
 
   return (
     <I18nProvider locale={locale}>
-      <EchlyApp todayLabel={todayLabel} initialView={initialView} />
+      <EchlyApp
+        todayLabel={todayLabel}
+        initialView={initialView}
+        initialHistoryId={initialHistoryId}
+      />
     </I18nProvider>
   );
 }
