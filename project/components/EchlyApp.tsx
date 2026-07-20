@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { AnalysisView } from "@/components/analysis/AnalysisView";
 import { ApprovalView } from "@/components/approval/ApprovalView";
@@ -26,7 +26,6 @@ import { mockCalendarEvents } from "@/lib/demo/mockCalendar";
 import {
   createDemoAnalysis,
   createDemoPlan,
-  getSampleHistory,
 } from "@/lib/demo/sampleCheckIns";
 import {
   calculateLoadSignal,
@@ -67,6 +66,12 @@ type ModeAudio = {
 
 type AudioByMode = Record<CheckInMode, ModeAudio>;
 
+type WorkspaceData = {
+  history: CheckIn[];
+  scheduleEntries: ScheduleEntry[];
+  preferences: { saveTranscript: boolean };
+};
+
 class ApiClientError extends Error {
   code: string;
 
@@ -101,6 +106,8 @@ async function parseApiResponse<T>(
       CLOUDFLARE_LIMIT_REACHED: "The AI usage limit has been reached. Please try again later.",
       CLOUDFLARE_INVALID_RESPONSE: "The AI response could not be validated. Please try again.",
       CLOUDFLARE_REQUEST_FAILED: "AI processing could not be completed. Please try again later.",
+      DATABASE_REQUEST_FAILED: "Your data could not be saved or loaded. Please try again.",
+      INVALID_DATA: "The data could not be validated. Please try again.",
     };
     const message = isEnglish
       ? englishErrors[data.code ?? ""] ?? "Something went wrong. Please try again."
@@ -174,6 +181,7 @@ type EchlyAppProps = {
 export function EchlyApp({ todayLabel: serverTodayLabel }: EchlyAppProps) {
   const { isEnglish, t } = useI18n();
   const { data: session, isPending: isSessionPending } = authClient.useSession();
+  const sessionUserId = session?.user.id ?? null;
   const [view, setView] = useState<WorkspaceView>("checkin");
   const [transcriptByMode, setTranscriptByMode] = useState<Record<CheckInMode, string>>({
     reflection: "",
@@ -193,12 +201,13 @@ export function EchlyApp({ todayLabel: serverTodayLabel }: EchlyAppProps) {
   const [pendingReflectionReport, setPendingReflectionReport] =
     useState<WorkloadSelfReport | null>(null);
   const [appliedActionIds, setAppliedActionIds] = useState<string[]>([]);
-  const [history, setHistory] = useState<CheckIn[]>(() => getSampleHistory());
+  const [history, setHistory] = useState<CheckIn[]>([]);
   const [scheduleEntries, setScheduleEntries] = useState<ScheduleEntry[]>([]);
   const [storageLoaded, setStorageLoaded] = useState(false);
   const [zonedNow, setZonedNow] = useState<ZonedNow | null>(null);
   const [saveTranscript, setSaveTranscript] = useState(true);
   const [tabsPreloaded, setTabsPreloaded] = useState(false);
+  const checkInWriteQueueRef = useRef<Promise<void>>(Promise.resolve());
 
   useEffect(() => {
     const timeZone = resolveBrowserTimeZone();
@@ -209,33 +218,124 @@ export function EchlyApp({ todayLabel: serverTodayLabel }: EchlyAppProps) {
   }, []);
 
   useEffect(() => {
-    const timeoutId = window.setTimeout(() => {
+    if (!sessionUserId) return;
+
+    let cancelled = false;
+    const resetStateId = window.setTimeout(() => {
+      setHistory([]);
+      setScheduleEntries([]);
+      setStorageLoaded(false);
+    }, 0);
+
+    async function loadDatabaseWorkspace() {
       try {
-        const savedHistory = window.localStorage.getItem(HISTORY_STORAGE_KEY);
-        if (savedHistory) {
-          const parsed = JSON.parse(savedHistory) as CheckIn[];
-          if (Array.isArray(parsed)) {
-            const uniqueCheckIns = new Map<string, CheckIn>();
-            for (const checkIn of [...parsed, ...getSampleHistory()]) {
-              if (!uniqueCheckIns.has(checkIn.id)) uniqueCheckIns.set(checkIn.id, checkIn);
+        const response = await fetch("/api/workspace", { cache: "no-store" });
+        const workspace = await parseApiResponse<WorkspaceData>(
+          response,
+          isEnglish,
+        );
+        const historyById = new Map(
+          workspace.history.map((checkIn) => [checkIn.id, checkIn]),
+        );
+        const schedulesById = new Map(
+          workspace.scheduleEntries.map((entry) => [entry.id, entry]),
+        );
+        let hasLegacyData = false;
+        const legacyHistory: CheckIn[] = [];
+        const legacyScheduleEntries: ScheduleEntry[] = [];
+
+        try {
+          const savedHistory = window.localStorage.getItem(HISTORY_STORAGE_KEY);
+          if (savedHistory) {
+            const parsed = JSON.parse(savedHistory) as CheckIn[];
+            if (Array.isArray(parsed)) {
+              for (const checkIn of parsed) {
+                if (checkIn.id === "history-1" || checkIn.id === "history-2") {
+                  continue;
+                }
+                historyById.set(checkIn.id, checkIn);
+                legacyHistory.push(checkIn);
+                hasLegacyData = true;
+              }
             }
-            setHistory([...uniqueCheckIns.values()]);
+          }
+
+          const savedSchedules = window.localStorage.getItem(
+            SCHEDULE_STORAGE_KEY,
+          );
+          if (savedSchedules) {
+            const parsed = JSON.parse(savedSchedules) as ScheduleEntry[];
+            if (Array.isArray(parsed)) {
+              for (const entry of parsed) {
+                schedulesById.set(entry.id, entry);
+                legacyScheduleEntries.push(entry);
+                hasLegacyData = true;
+              }
+            }
+          }
+        } catch {
+          // Invalid legacy storage is ignored; the database remains authoritative.
+        }
+
+        const mergedHistory = [...historyById.values()]
+          .sort((left, right) => right.createdAt.localeCompare(left.createdAt))
+          .slice(0, 30);
+        const mergedSchedules = [...schedulesById.values()]
+          .sort((left, right) => right.createdAt.localeCompare(left.createdAt))
+          .slice(0, 60);
+
+        if (hasLegacyData) {
+          try {
+            const importResponse = await fetch("/api/workspace", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                history: legacyHistory.slice(0, 30),
+                scheduleEntries: legacyScheduleEntries.slice(0, 60),
+              }),
+            });
+            await parseApiResponse(importResponse, isEnglish);
+            window.localStorage.removeItem(HISTORY_STORAGE_KEY);
+            window.localStorage.removeItem(SCHEDULE_STORAGE_KEY);
+          } catch (migrationError) {
+            if (!cancelled) {
+              setError(
+                migrationError instanceof Error
+                  ? migrationError.message
+                  : isEnglish
+                    ? "Existing browser data could not be migrated."
+                    : "ブラウザ内の既存データを移行できませんでした。",
+              );
+            }
           }
         }
 
-        const savedSchedules = window.localStorage.getItem(SCHEDULE_STORAGE_KEY);
-        if (savedSchedules) {
-          const parsed = JSON.parse(savedSchedules) as ScheduleEntry[];
-          if (Array.isArray(parsed)) setScheduleEntries(parsed);
+        if (!cancelled) {
+          setHistory(mergedHistory);
+          setScheduleEntries(mergedSchedules);
+          setSaveTranscript(workspace.preferences.saveTranscript);
         }
-      } catch {
-        // Browser storage is optional; the current session remains usable.
+      } catch (caught) {
+        if (!cancelled) {
+          setError(
+            caught instanceof Error
+              ? caught.message
+              : isEnglish
+                ? "Your data could not be loaded."
+                : "データを読み込めませんでした。",
+          );
+        }
       } finally {
-        setStorageLoaded(true);
+        if (!cancelled) setStorageLoaded(true);
       }
-    }, 0);
-    return () => window.clearTimeout(timeoutId);
-  }, []);
+    }
+
+    void loadDatabaseWorkspace();
+    return () => {
+      cancelled = true;
+      window.clearTimeout(resetStateId);
+    };
+  }, [isEnglish, sessionUserId]);
 
   useEffect(() => {
     window.scrollTo({ top: 0, behavior: "auto" });
@@ -333,6 +433,25 @@ export function EchlyApp({ todayLabel: serverTodayLabel }: EchlyAppProps) {
     return plan.move.length + plan.reschedule.length + plan.restBlocks.length + plan.emailDrafts.length;
   }, [plan]);
 
+  useEffect(() => {
+    if (analysis || plan || !todayCheckIn) return;
+    const storedPlan = todayCheckIn.plan;
+    const hasStoredPlan =
+      storedPlan.keep.length > 0 ||
+      storedPlan.move.length > 0 ||
+      storedPlan.reschedule.length > 0 ||
+      storedPlan.restBlocks.length > 0 ||
+      storedPlan.emailDrafts.length > 0 ||
+      storedPlan.rationale.length > 0;
+    if (!hasStoredPlan) return;
+
+    const restoreId = window.setTimeout(() => {
+      setPlan(storedPlan);
+      setAppliedActionIds(todayCheckIn.approvedActionIds);
+    }, 0);
+    return () => window.clearTimeout(restoreId);
+  }, [analysis, plan, todayCheckIn]);
+
   if (isSessionPending) {
     return (
       <main className="grid min-h-dvh place-items-center bg-[#f7f8fc] text-sm text-[#68708f]">
@@ -344,28 +463,67 @@ export function EchlyApp({ todayLabel: serverTodayLabel }: EchlyAppProps) {
   if (!session) return <SignInView />;
   const signedInUser = session.user;
 
-  function persistHistory(update: (current: CheckIn[]) => CheckIn[]) {
-    setHistory((current) => {
-      const next = update(current);
-      try {
-        window.localStorage.setItem(HISTORY_STORAGE_KEY, JSON.stringify(next.slice(0, 30)));
-      } catch {
-        // In-memory history remains usable in private browsing modes.
-      }
-      return next;
-    });
+  function replaceCheckInRecord(checkIn: CheckIn) {
+    setHistory((current) => [
+      checkIn,
+      ...current.filter(
+        (item) =>
+          item.id !== checkIn.id &&
+          (checkIn.localDate === undefined ||
+            item.localDate !== checkIn.localDate),
+      ),
+    ].slice(0, 30));
   }
 
-  function persistScheduleEntries(update: (current: ScheduleEntry[]) => ScheduleEntry[]) {
-    setScheduleEntries((current) => {
-      const next = update(current);
-      try {
-        window.localStorage.setItem(SCHEDULE_STORAGE_KEY, JSON.stringify(next.slice(0, 60)));
-      } catch {
-        // In-memory schedule entries remain usable in private browsing modes.
-      }
-      return next;
+  function replaceScheduleEntry(scheduleEntry: ScheduleEntry) {
+    setScheduleEntries((current) => [
+      scheduleEntry,
+      ...current.filter((item) => item.id !== scheduleEntry.id),
+    ].slice(0, 60));
+  }
+
+  async function saveCheckInRecord(checkIn: CheckIn) {
+    const response = await fetch("/api/workspace/check-ins", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ checkIn }),
     });
+    await parseApiResponse(response, isEnglish);
+  }
+
+  function queueCheckInRecord(checkIn: CheckIn) {
+    const operation = checkInWriteQueueRef.current
+      .catch(() => undefined)
+      .then(() => saveCheckInRecord(checkIn));
+    checkInWriteQueueRef.current = operation;
+    return operation;
+  }
+
+  async function saveScheduleEntry(scheduleEntry: ScheduleEntry) {
+    const response = await fetch("/api/workspace/schedule-entries", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ scheduleEntry }),
+    });
+    await parseApiResponse(response, isEnglish);
+  }
+
+  async function removeScheduleEntry(id: string) {
+    const response = await fetch("/api/workspace/schedule-entries", {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id }),
+    });
+    await parseApiResponse(response, isEnglish);
+  }
+
+  async function savePreferences(nextSaveTranscript: boolean) {
+    const response = await fetch("/api/workspace/preferences", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ saveTranscript: nextSaveTranscript }),
+    });
+    await parseApiResponse(response, isEnglish);
   }
 
   function handleAudioReady(mode: CheckInMode, blob: Blob, meta: AudioMeta) {
@@ -564,10 +722,8 @@ export function EchlyApp({ todayLabel: serverTodayLabel }: EchlyAppProps) {
         source: resolvedSource,
       };
 
-      persistHistory((current) => [
-        checkIn,
-        ...current.filter((item) => item.localDate !== localDate),
-      ]);
+      await queueCheckInRecord(checkIn);
+      replaceCheckInRecord(checkIn);
       setTranscript(resolvedTranscript);
       setAudioMeta(resolvedAudioMeta);
       setAnalysis(result);
@@ -661,11 +817,12 @@ export function EchlyApp({ todayLabel: serverTodayLabel }: EchlyAppProps) {
         })),
         source: resolvedSource,
       };
-      persistScheduleEntries((current) => [entry, ...current]);
+      await saveScheduleEntry(entry);
+      replaceScheduleEntry(entry);
       setTranscriptByMode((current) => ({ ...current, planning: "" }));
       handleAudioDiscard("planning");
       setTranscriptReview(null);
-      setPlan(null);
+      await clearStoredPlan();
     } catch (caught) {
       setError(
         caught instanceof Error
@@ -712,6 +869,52 @@ export function EchlyApp({ todayLabel: serverTodayLabel }: EchlyAppProps) {
     setError(null);
     setProcessingStage(null);
   }
+
+  async function persistPlan(nextPlan: TomorrowPlan) {
+    setPlan(nextPlan);
+    const currentRecord = localDate
+      ? history.find((item) => item.localDate === localDate)
+      : undefined;
+    if (!currentRecord) return;
+
+    const updated: CheckIn = {
+      ...currentRecord,
+      plan: nextPlan,
+    };
+    await queueCheckInRecord(updated);
+    replaceCheckInRecord(updated);
+  }
+
+  function handlePlanChange(nextPlan: TomorrowPlan) {
+    void persistPlan(nextPlan).catch((caught) => {
+      setError(
+        caught instanceof Error
+          ? caught.message
+          : isEnglish
+            ? "The plan change could not be saved."
+            : "プランの変更を保存できませんでした。",
+      );
+    });
+  }
+
+  async function clearStoredPlan() {
+    setPlan(null);
+    const currentRecord = localDate
+      ? history.find((item) => item.localDate === localDate)
+      : undefined;
+    if (!currentRecord) return;
+
+    const updated: CheckIn = {
+      ...currentRecord,
+      plan: emptyPlan(currentRecord.condition),
+      approvalStatus: "draft",
+      approvedActionIds: [],
+    };
+    await queueCheckInRecord(updated);
+    replaceCheckInRecord(updated);
+    setAppliedActionIds([]);
+  }
+
   async function handleCreatePlan() {
     if (!activeAnalysis) {
       setError("今日の振り返りを完了すると、負荷に合わせたプランを作成できます。");
@@ -747,7 +950,7 @@ export function EchlyApp({ todayLabel: serverTodayLabel }: EchlyAppProps) {
         }
       }
       nextPlan = applySpokenTimesToPlan(nextPlan, planTasks);
-      setPlan(nextPlan);
+      await persistPlan(nextPlan);
       setAppliedActionIds([]);
       setView("plan");
     } catch (caught) {
@@ -757,30 +960,68 @@ export function EchlyApp({ todayLabel: serverTodayLabel }: EchlyAppProps) {
     }
   }
 
-  function handleApply(ids: string[]) {
+  async function handleApply(ids: string[]) {
     if (!activeAnalysis || !plan || !ids.length) return;
     const mergedIds = Array.from(new Set([...appliedActionIds, ...ids]));
-    setAppliedActionIds(mergedIds);
+    const currentRecord = localDate
+      ? history.find((item) => item.localDate === localDate)
+      : undefined;
+    if (!currentRecord) return;
 
-    persistHistory((current) => {
-      const currentRecord = localDate
-        ? current.find((item) => item.localDate === localDate)
-        : undefined;
-      if (!currentRecord) return current;
-      const updated: CheckIn = {
-        ...currentRecord,
-        plan,
-        approvalStatus:
-          mergedIds.length >= actionCount ? "approved" : "partially_approved",
-        approvedActionIds: mergedIds,
-      };
-      return [updated, ...current.filter((item) => item.id !== updated.id)];
-    });
+    const updated: CheckIn = {
+      ...currentRecord,
+      plan,
+      approvalStatus:
+        mergedIds.length >= actionCount ? "approved" : "partially_approved",
+      approvedActionIds: mergedIds,
+    };
+
+    try {
+      await queueCheckInRecord(updated);
+      replaceCheckInRecord(updated);
+      setAppliedActionIds(mergedIds);
+    } catch (caught) {
+      setError(
+        caught instanceof Error
+          ? caught.message
+          : isEnglish
+            ? "Approval could not be saved."
+            : "承認内容を保存できませんでした。",
+      );
+    }
   }
 
-  function handleRemoveSchedule(id: string) {
-    persistScheduleEntries((current) => current.filter((entry) => entry.id !== id));
-    setPlan(null);
+  async function handleRemoveSchedule(id: string) {
+    try {
+      await removeScheduleEntry(id);
+      setScheduleEntries((current) =>
+        current.filter((entry) => entry.id !== id),
+      );
+      await clearStoredPlan();
+    } catch (caught) {
+      setError(
+        caught instanceof Error
+          ? caught.message
+          : isEnglish
+            ? "The schedule entry could not be deleted."
+            : "予定を削除できませんでした。",
+      );
+    }
+  }
+
+  function handleSaveTranscriptChange(nextValue: boolean) {
+    const previousValue = saveTranscript;
+    setSaveTranscript(nextValue);
+    void savePreferences(nextValue).catch((caught) => {
+      setSaveTranscript(previousValue);
+      setError(
+        caught instanceof Error
+          ? caught.message
+          : isEnglish
+            ? "The setting could not be saved."
+            : "設定を保存できませんでした。",
+      );
+    });
   }
 
   function startNewCheckIn() {
@@ -825,7 +1066,7 @@ export function EchlyApp({ todayLabel: serverTodayLabel }: EchlyAppProps) {
       return plan ? (
         <PlanView
           plan={plan}
-          onPlanChange={setPlan}
+          onPlanChange={handlePlanChange}
           onBack={() => setView("analysis")}
           onApproval={() => setView("approval")}
         />
@@ -844,7 +1085,7 @@ export function EchlyApp({ todayLabel: serverTodayLabel }: EchlyAppProps) {
         <ApprovalView
           plan={plan}
           appliedActionIds={appliedActionIds}
-          onPlanChange={setPlan}
+          onPlanChange={handlePlanChange}
           onApply={handleApply}
           onBack={() => setView("plan")}
         />
@@ -860,7 +1101,7 @@ export function EchlyApp({ todayLabel: serverTodayLabel }: EchlyAppProps) {
         <SettingsView
           user={{ name: signedInUser.name, email: signedInUser.email }}
           saveTranscript={saveTranscript}
-          onSaveTranscriptChange={setSaveTranscript}
+          onSaveTranscriptChange={handleSaveTranscriptChange}
         />
       );
     }

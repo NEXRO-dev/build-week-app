@@ -63,6 +63,18 @@ CRON_SECRET=...
 
 On iPhone and iPad, Web Push requires iOS/iPadOS 16.4 or later and Echly must be installed on the Home Screen. The app refreshes a saved subscription's time zone whenever it opens, so the next reminder follows the user when they travel.
 
+## Application data in Turso
+
+Authenticated users' check-ins, transcripts (when enabled), workload answers, audio features, extracted tasks, generated plans, approvals, added schedule entries, and preferences are stored in Turso. The app creates these tables automatically on the first authenticated workspace request:
+
+- echly_check_ins
+- echly_schedule_entries
+- echly_user_preferences
+
+Every query is scoped by the Better Auth user ID. Existing browser data from earlier versions is imported once, then removed from localStorage only after the database import succeeds.
+
+Raw audio blobs are intentionally not stored. They are discarded after transcription; only the transcript and derived audio features are persisted.
+
 You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
 
 This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
