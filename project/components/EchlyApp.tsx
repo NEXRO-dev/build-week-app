@@ -143,6 +143,41 @@ function audioMetaWithSpeechRate(meta: AudioMeta, transcript: string): AudioMeta
   };
 }
 
+function combineAudioMeta(
+  metas: AudioMeta[],
+  transcript: string,
+): AudioMeta {
+  const durationSec = metas.reduce(
+    (sum, meta) => sum + Math.max(0, meta.durationSec),
+    0,
+  );
+  const weightedAverage = (key: "averageVolume" | "silenceRatio") => {
+    const available = metas.filter(
+      (meta) => meta[key] !== null && meta.durationSec > 0,
+    );
+    const duration = available.reduce((sum, meta) => sum + meta.durationSec, 0);
+    if (!duration) return null;
+    return Number(
+      (
+        available.reduce(
+          (sum, meta) => sum + (meta[key] ?? 0) * meta.durationSec,
+          0,
+        ) / duration
+      ).toFixed(3),
+    );
+  };
+
+  return {
+    durationSec: Number(durationSec.toFixed(1)),
+    averageVolume: weightedAverage("averageVolume"),
+    silenceRatio: weightedAverage("silenceRatio"),
+    speechRate:
+      durationSec > 0 && transcript.length > 0
+        ? Number((transcript.length / durationSec).toFixed(2))
+        : null,
+  };
+}
+
 function emptyPlan(condition: ConditionSignal): TomorrowPlan {
   return {
     condition,
@@ -585,6 +620,7 @@ export function EchlyApp({ todayLabel: serverTodayLabel }: EchlyAppProps) {
 
   function handleReflectionAssessmentClose() {
     handleAudioDiscard("reflection");
+    handleAudioDiscard("planning");
     setSelfReport({});
     setPendingReflectionReport(null);
     setTranscriptReview(null);
@@ -604,7 +640,7 @@ export function EchlyApp({ todayLabel: serverTodayLabel }: EchlyAppProps) {
         ? "m4a"
         : "webm";
     formData.append("audio", audioBlob, `echly-${mode}.${extension}`);
-    formData.append("context", mode === "reflection" ? "combined" : mode);
+    formData.append("context", mode);
     formData.append("locale", isEnglish ? "us-en" : "jp-ja");
     formData.append("durationSec", String(meta.durationSec));
     if (meta.averageVolume !== null) formData.append("averageVolume", String(meta.averageVolume));
@@ -688,6 +724,107 @@ export function EchlyApp({ todayLabel: serverTodayLabel }: EchlyAppProps) {
     );
   }
 
+  async function resolveCombinedTranscript(
+    confirmedTranscript?: string,
+  ): Promise<string | null> {
+    if (confirmedTranscript !== undefined) {
+      const confirmed = confirmedTranscript.trim();
+      if (!confirmed) {
+        throw new ApiClientError(
+          "確認した文字起こしを入力してください。",
+          "INPUT_REQUIRED",
+        );
+      }
+      return confirmed;
+    }
+
+    async function resolveSection(mode: CheckInMode) {
+      const typed = transcriptByMode[mode].trim();
+      const recording = audioByMode[mode];
+      let result: Awaited<ReturnType<typeof transcribeRecording>> | null = null;
+
+      if (recording.blob) {
+        try {
+          result = await transcribeRecording(mode, recording.blob, recording.meta);
+        } catch (caught) {
+          if (!canUseDemoFallback(caught) || !typed) throw caught;
+        }
+      }
+
+      const text = [result?.transcript.trim(), typed]
+        .filter(Boolean)
+        .join("\n\n");
+      if (!text) {
+        throw new ApiClientError(
+          mode === "reflection"
+            ? "STEP 1「今日の振り返り」を入力してください。"
+            : "STEP 2「明日の予定・タスク」を入力してください。",
+          "INPUT_REQUIRED",
+        );
+      }
+      return { mode, typed, result, text };
+    }
+
+    const [reflection, planning] = await Promise.all([
+      resolveSection("reflection"),
+      resolveSection("planning"),
+    ]);
+    const formatCombined = (reflectionText: string, planningText: string) =>
+      isEnglish
+        ? `STEP 1 — Today's reflection\n${reflectionText}\n\nSTEP 2 — Tomorrow's plans and tasks\n${planningText}`
+        : `STEP 1：今日の振り返り\n${reflectionText}\n\nSTEP 2：明日の予定・タスク\n${planningText}`;
+    const transcript = formatCombined(reflection.text, planning.text);
+    const transcribed = [reflection.result, planning.result].filter(
+      (result): result is NonNullable<typeof result> => Boolean(result),
+    );
+
+    if (!transcribed.length) return transcript;
+
+    const primary = transcribed[0];
+    const numericMinimum = (values: Array<number | null>) => {
+      const numbers = values.filter((value): value is number => value !== null);
+      return numbers.length ? Math.min(...numbers) : null;
+    };
+    const alternativeCount = Math.max(
+      1,
+      reflection.result?.alternatives.length ?? 0,
+      planning.result?.alternatives.length ?? 0,
+    );
+    const sectionAlternative = (
+      section: typeof reflection,
+      index: number,
+    ) => {
+      const recognized = section.result?.alternatives[index]?.transcript.trim()
+        ?? section.result?.transcript.trim()
+        ?? "";
+      return [recognized, section.typed].filter(Boolean).join("\n\n");
+    };
+
+    setTranscriptReview({
+      mode: "reflection",
+      transcript,
+      provider: primary.provider,
+      confidence: numericMinimum(transcribed.map((result) => result.confidence)),
+      agreement: numericMinimum(transcribed.map((result) => result.agreement)),
+      quality: transcribed.some((result) => result.quality === "review")
+        ? "review"
+        : "high",
+      alternatives: Array.from({ length: alternativeCount }, (_, index) => ({
+        provider: primary.provider,
+        transcript: formatCombined(
+          sectionAlternative(reflection, index),
+          sectionAlternative(planning, index),
+        ),
+        confidence: numericMinimum(
+          [reflection.result, planning.result]
+            .filter((result): result is NonNullable<typeof result> => Boolean(result))
+            .map((result) => result.alternatives[index]?.confidence ?? result.confidence),
+        ),
+      })),
+    });
+    return null;
+  }
+
   async function handleAnalyzeReflection(
     completedReport: WorkloadSelfReport,
     confirmedTranscript?: string,
@@ -717,14 +854,13 @@ export function EchlyApp({ todayLabel: serverTodayLabel }: EchlyAppProps) {
     );
 
     try {
-      const resolvedTranscript = await resolveModeTranscript(
-        "reflection",
+      const resolvedTranscript = await resolveCombinedTranscript(
         confirmedTranscript,
       );
       if (resolvedTranscript === null) return;
 
-      const resolvedAudioMeta = audioMetaWithSpeechRate(
-        audioByMode.reflection.meta,
+      const resolvedAudioMeta = combineAudioMeta(
+        [audioByMode.reflection.meta, audioByMode.planning.meta],
         resolvedTranscript,
       );
       const audioBaseline = history
@@ -914,11 +1050,19 @@ export function EchlyApp({ todayLabel: serverTodayLabel }: EchlyAppProps) {
   function handleTranscriptReviewRetry() {
     if (!transcriptReview) return;
     const mode = transcriptReview.mode;
+    const retryingCombinedCheckIn =
+      mode === "reflection" && pendingReflectionReport !== null;
     setTranscriptReview(null);
     setPendingReflectionReport(null);
     setError(null);
-    handleAudioDiscard(mode);
-    setRetryRecordingMode(mode);
+    if (retryingCombinedCheckIn) {
+      handleAudioDiscard("reflection");
+      handleAudioDiscard("planning");
+      setRetryRecordingMode("reflection");
+    } else {
+      handleAudioDiscard(mode);
+      setRetryRecordingMode(mode);
+    }
   }
 
   function handleTranscriptReviewClose() {

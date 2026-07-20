@@ -40,11 +40,6 @@ export type ReflectionStatus = "loading" | "too-early" | "available" | "complete
 
 const REFLECTION_SAMPLE =
   "今日は資料作成を終えました。午後は会議が続いて少し疲れましたが、重要な連絡まで対応できました。";
-const COMBINED_CHECK_IN_SAMPLE =
-  "今日は資料作成を終えました。午後は会議が続いて少し疲れました。明日は10時に定例会議があり、午後は提案資料を仕上げます。";
-const COMBINED_CHECK_IN_SAMPLE_EN =
-  "I finished preparing the materials today. The afternoon was full of meetings, so I feel a little tired. Tomorrow I have a team meeting at 10 AM and will finish the proposal in the afternoon.";
-
 type AssessmentQuestion = {
   key: keyof WorkloadSelfReport;
   eyebrow: string;
@@ -204,6 +199,12 @@ export function CheckInView(props: CheckInViewProps) {
   const currentAudioBlob = audioByMode[mode];
   const currentTranscript = transcriptByMode[mode];
   const combinedCheckInAvailable = reflectionStatus === "available";
+  const hasReflectionInput = Boolean(
+    audioByMode.reflection || transcriptByMode.reflection.trim(),
+  );
+  const hasPlanningInput = Boolean(
+    audioByMode.planning || transcriptByMode.planning.trim(),
+  );
   const tomorrowTaskCount = scheduleEntries.reduce(
     (total, entry) => total + entry.tasks.filter(isTomorrowActionableTask).length,
     0,
@@ -226,12 +227,31 @@ export function CheckInView(props: CheckInViewProps) {
   }, [onRetryRecordingShown, retryRecordingMode]);
 
   function startAssessment() {
+    if (combinedCheckInAvailable && (!hasReflectionInput || !hasPlanningInput)) {
+      props.onError(
+        t(
+          "STEP 1とSTEP 2の両方を入力してください。",
+          "Complete both STEP 1 and STEP 2.",
+        ),
+      );
+      setMode(hasReflectionInput ? "planning" : "reflection");
+      return;
+    }
+
     const firstUnanswered = localizedAssessmentQuestions.findIndex(
       (question) => !Number.isFinite(selfReport[question.key]),
     );
     setAssessmentIndex(firstUnanswered >= 0 ? firstUnanswered : 0);
     setAssessmentCloseConfirmOpen(false);
     setAssessmentOpen(true);
+  }
+
+  function handleCombinedPrimaryAction() {
+    if (mode === "reflection") {
+      setMode("planning");
+      return;
+    }
+    startAssessment();
   }
 
   function requestAssessmentClose() {
@@ -265,35 +285,56 @@ export function CheckInView(props: CheckInViewProps) {
   const greetingSuffix = !isEnglish && !greetingName.endsWith("さん") ? "さん" : "";
   const prompt = mode === "reflection"
     ? {
-        title: combinedCheckInAvailable
-          ? t("今日と明日をまとめてチェックイン", "Check in for today and tomorrow")
-          : t("今日の振り返り", "Reflect on today"),
+        title: t("今日の振り返り", "Reflect on today"),
         text: t(
-          combinedCheckInAvailable
-            ? "今日起きたことや感じた負担に続けて、明日の予定・締切・やることもまとめて話してください。"
-            : "今日起きたこと、進んだこと、詰まったことや疲れを話してください。",
-          combinedCheckInAvailable
-            ? "Tell us about today and how it felt, then add tomorrow's plans, deadlines, and tasks in the same recording."
-            : "Tell us what happened today, what moved forward, what felt blocked, and how tired you felt.",
+          "まず、今日起きたこと、進んだこと、詰まったことや疲れを話してください。",
+          "First, tell us what happened today, what moved forward, what felt blocked, and how tired you felt.",
         ),
-        examples: combinedCheckInAvailable
-          ? isEnglish
-            ? ["What happened today", "Energy and workload", "Tomorrow's plans"]
-            : ["今日あったこと", "疲れや負担", "明日の予定・締切"]
-          : isEnglish
-            ? ["What moved forward", "What felt blocked", "Energy and focus"]
-            : ["進んだこと", "詰まったこと", "疲れや集中度"],
+        examples: isEnglish
+          ? ["What moved forward", "What felt blocked", "Energy and focus"]
+          : ["進んだこと", "詰まったこと", "疲れや集中度"],
       }
     : {
-        title: t("明日の予定を追加", "Add tomorrow's plans"),
+        title: t("明日の予定・タスク", "Tomorrow's plans and tasks"),
         text: t(
-          "明日の予定・締切・やることを、思い出したときに追加できます。",
-          "Add tomorrow's plans, deadlines, and tasks whenever they come to mind.",
+          combinedCheckInAvailable
+            ? "次に、明日の予定・締切・やることを話してください。"
+            : "明日の予定・締切・やることを、思い出したときに追加できます。",
+          combinedCheckInAvailable
+            ? "Next, tell us about tomorrow's plans, deadlines, and tasks."
+            : "Add tomorrow's plans, deadlines, and tasks whenever they come to mind.",
         ),
         examples: isEnglish
           ? ["Tomorrow's meetings", "Work to complete", "Fixed commitments"]
           : ["明日の会議", "やるべき作業", "動かせない予定"],
       };
+  const reviewAudioBlobs: Array<{ label: string; blob: Blob }> = [];
+  if (transcriptReview) {
+    if (transcriptReview.mode === "reflection" && combinedCheckInAvailable) {
+      const reflectionAudio = audioByMode.reflection;
+      const planningAudio = audioByMode.planning;
+      if (reflectionAudio) {
+        reviewAudioBlobs.push({
+          label: t("STEP 1：今日の振り返り", "STEP 1: Today's reflection"),
+          blob: reflectionAudio,
+        });
+      }
+      if (planningAudio) {
+        reviewAudioBlobs.push({
+          label: t("STEP 2：明日の予定・タスク", "STEP 2: Tomorrow's plans and tasks"),
+          blob: planningAudio,
+        });
+      }
+    } else {
+      const reviewAudio = audioByMode[transcriptReview.mode];
+      if (reviewAudio) {
+        reviewAudioBlobs.push({
+          label: t("録音した音声", "Recording"),
+          blob: reviewAudio,
+        });
+      }
+    }
+  }
 
   return (
     <div>
@@ -322,6 +363,28 @@ export function CheckInView(props: CheckInViewProps) {
         {error ? <div role="alert" className="mt-4 rounded-lg border border-[#ffc9c9] bg-[#fff5f5] px-4 py-3 text-sm text-[#b43d4d]">{error}</div> : null}
         {processingStage ? <div className="mt-4 flex min-w-0 items-center gap-2 rounded-lg bg-[#f1efff] px-4 py-3 text-sm text-[#5039ce]"><LoaderCircle size={17} className="shrink-0 animate-spin" /><span className="min-w-0 break-words">{processingStage}</span></div> : null}
 
+        {combinedCheckInAvailable ? (
+          <section className="mt-5 overflow-hidden rounded-lg border border-[#e2e5f0] bg-white shadow-[0_10px_28px_rgba(32,39,80,0.05)]">
+            <div className="flex items-center justify-between gap-3 px-4 pb-3 pt-4">
+              <div>
+                <p className="text-[10px] font-bold uppercase tracking-wide text-[#68708f]">Voice check-in</p>
+                <h2 className="mt-1 text-base font-bold text-[#111735]">{t("2ステップで明日を整える", "Prepare for tomorrow in two steps")}</h2>
+              </div>
+              <span className="rounded-md bg-[#f2f4fa] px-2.5 py-1 text-[10px] font-bold text-[#5e6683]">{mode === "reflection" ? "1" : "2"}/2</span>
+            </div>
+            <div className="grid grid-cols-2 gap-2 px-3 pb-3">
+              <button type="button" onClick={() => setMode("reflection")} aria-current={mode === "reflection" ? "step" : undefined} className={`flex min-h-16 items-center gap-2 rounded-md border px-2.5 py-2 text-left active:scale-[0.98] ${mode === "reflection" ? "border-[#6d58ff] bg-[#f7f5ff] text-[#3420bc]" : "border-[#e5e7f1] bg-[#f8f9fd] text-[#5e6683]"}`}>
+                <span className={`grid size-8 shrink-0 place-items-center rounded-full ${mode === "reflection" || hasReflectionInput ? "bg-[#efedff] text-[#5b42ff]" : "bg-white text-[#737b99]"}`}>{hasReflectionInput ? <Check size={16} /> : <MessageSquareText size={16} />}</span>
+                <span><span className="block text-[10px] font-bold">STEP 1</span><span className="block text-xs font-bold">{t("今日の振り返り", "Today's reflection")}</span></span>
+              </button>
+              <button type="button" disabled={!hasReflectionInput} onClick={() => setMode("planning")} aria-current={mode === "planning" ? "step" : undefined} className={`flex min-h-16 items-center gap-2 rounded-md border px-2.5 py-2 text-left active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-45 ${mode === "planning" ? "border-[#41b69d] bg-[#f0fbf7] text-[#13705f]" : "border-[#e5e7f1] bg-[#f8f9fd] text-[#5e6683]"}`}>
+                <span className={`grid size-8 shrink-0 place-items-center rounded-full ${mode === "planning" || hasPlanningInput ? "bg-[#e8f8f2] text-[#18957d]" : "bg-white text-[#737b99]"}`}>{hasPlanningInput ? <Check size={16} /> : <CalendarCheck size={16} />}</span>
+                <span><span className="block text-[10px] font-bold">STEP 2</span><span className="block text-xs font-bold">{t("明日の予定", "Tomorrow's plans")}</span></span>
+              </button>
+            </div>
+            <p className="border-t border-[#eceef6] bg-[#f8f9fd] px-4 py-2.5 text-xs leading-5 text-[#59617d]">{t("各ステップの入力を別々に保持し、最後にまとめて解析します。", "Each step is kept separately and analyzed together at the end.")}</p>
+          </section>
+        ) : (
         <div className="mt-5 grid grid-cols-2 rounded-lg bg-[#f1f2f7] p-1" role="tablist" aria-label="入力する内容">
           <button
             type="button"
@@ -331,9 +394,7 @@ export function CheckInView(props: CheckInViewProps) {
             className={`flex min-h-11 items-center justify-center gap-2 rounded-md px-2 text-xs font-bold ${mode === "reflection" ? "bg-white text-[#4d35db] shadow-sm" : "text-[#68708f]"}`}
           >
             {reflectionStatus === "completed" ? <Check size={15} /> : reflectionStatus === "too-early" ? <LockKeyhole size={15} /> : <MessageSquareText size={15} />}
-            {combinedCheckInAvailable
-              ? t("今日＋明日", "Today + tomorrow")
-              : t("今日の振り返り", "Today")}
+            {t("今日の振り返り", "Today")}
           </button>
           <button
             type="button"
@@ -342,15 +403,10 @@ export function CheckInView(props: CheckInViewProps) {
             onClick={() => setMode("planning")}
             className={`flex min-h-11 items-center justify-center gap-2 rounded-md px-2 text-xs font-bold ${mode === "planning" ? "bg-white text-[#13705f] shadow-sm" : "text-[#68708f]"}`}
           >
-            <Plus size={15} />{combinedCheckInAvailable ? t("明日だけ追加", "Add tomorrow only") : t("明日の予定", "Tomorrow")}
+            <Plus size={15} />{t("明日の予定", "Tomorrow")}
           </button>
         </div>
-
-        {combinedCheckInAvailable ? (
-          <p className="mt-2 rounded-lg bg-[#f3f1ff] px-3 py-2 text-xs font-semibold leading-5 text-[#5039ce]">
-            {t("20時以降は、今日の振り返りと明日の予定を1回の入力でまとめて処理できます。", "After 8:00 PM, one entry can cover today's reflection and tomorrow's plans.")}
-          </p>
-        ) : null}
+        )}
 
         <section className={`mt-3 overflow-hidden rounded-lg border ${mode === "reflection" ? "border-[#e2ddff]" : "border-[#d5efe7]"}`}>
           <div className={`px-4 py-4 ${mode === "reflection" ? "bg-[#faf9ff]" : "bg-[#f7fcfa]"}`}>
@@ -389,13 +445,13 @@ export function CheckInView(props: CheckInViewProps) {
             onAudioReady={(blob, meta) => onAudioReady(mode, blob, meta)}
             onDiscard={() => onAudioDiscard(mode)}
             onError={props.onError}
-            onPrimaryAction={mode === "reflection" ? startAssessment : () => onAddSchedule()}
+            onPrimaryAction={combinedCheckInAvailable ? handleCombinedPrimaryAction : mode === "reflection" ? startAssessment : () => onAddSchedule()}
             isProcessing={Boolean(processingStage)}
-            idleLabel={mode === "reflection" ? (combinedCheckInAvailable ? t("今日と明日の内容をまとめて録音", "Record today and tomorrow together") : t("今日の振り返りを録音", "Record today's reflection")) : t("明日の予定を録音", "Record tomorrow's plans")}
+            idleLabel={mode === "reflection" ? t("今日の振り返りを録音", "Record today's reflection") : t("明日の予定を録音", "Record tomorrow's plans")}
             recordingLabel={t("録音中", "Recording")}
             recordedLabel={t("録音できました", "Recording ready")}
-            durationHint={mode === "reflection" && combinedCheckInAvailable ? t("目安：30秒〜2分（今日のこと→明日の予定）", "About 30 seconds–2 minutes (today, then tomorrow)") : mode === "reflection" ? t("目安：30秒〜1分", "About 30–60 seconds") : t("目安：30秒〜2分", "About 30 seconds–2 minutes")}
-            primaryActionLabel={mode === "reflection" ? t("負荷確認へ", "Continue to load check") : t("予定を追加", "Add plans")}
+            durationHint={mode === "reflection" ? t("目安：30秒〜1分", "About 30–60 seconds") : t("目安：30秒〜2分", "About 30 seconds–2 minutes")}
+            primaryActionLabel={combinedCheckInAvailable ? mode === "reflection" ? t("STEP 2へ", "Continue to STEP 2") : t("負荷確認へ", "Continue to load check") : mode === "reflection" ? t("負荷確認へ", "Continue to load check") : t("予定を追加", "Add plans")}
             tone={mode}
           />
         ) : null}
@@ -411,27 +467,27 @@ export function CheckInView(props: CheckInViewProps) {
                   onInput={(event) => onTranscriptChange(mode, event.currentTarget.value)}
                   rows={5}
                   fullWidth
-                  placeholder={mode === "reflection" ? (combinedCheckInAvailable ? t("今日あったこと・感じた負担・明日の予定や締切", "What happened today, how it felt, and tomorrow's plans") : t("今日あったことや感じた負担", "What happened today and how it felt")) : t("明日の会議、作業、締切など", "Tomorrow's meetings, tasks, and deadlines")}
+                  placeholder={mode === "reflection" ? t("今日あったことや感じた負担", "What happened today and how it felt") : t("明日の会議、作業、締切など", "Tomorrow's meetings, tasks, and deadlines")}
                   className="min-h-32 w-full resize-none rounded-md border border-[#dfe2ec] bg-white px-3 py-2 text-sm leading-6 text-[#27304d] outline-none focus:border-[#6d58ff] focus:ring-2 focus:ring-[#ded9ff]"
                 />
               </TextField>
               <div className="mt-2 flex flex-wrap gap-2">
-                <Button size="sm" variant="ghost" onPress={() => onTranscriptChange(mode, mode === "reflection" ? combinedCheckInAvailable ? (isEnglish ? COMBINED_CHECK_IN_SAMPLE_EN : COMBINED_CHECK_IN_SAMPLE) : (isEnglish ? "I finished preparing the materials today. The afternoon was full of meetings, so I feel a little tired." : REFLECTION_SAMPLE) : (isEnglish ? SAMPLE_TRANSCRIPT_EN : SAMPLE_TRANSCRIPT))} className="min-w-0">{t("デモ文を入力", "Insert demo text")}</Button>
+                <Button size="sm" variant="ghost" onPress={() => onTranscriptChange(mode, mode === "reflection" ? (isEnglish ? "I finished preparing the materials today. The afternoon was full of meetings, so I feel a little tired." : REFLECTION_SAMPLE) : (isEnglish ? SAMPLE_TRANSCRIPT_EN : SAMPLE_TRANSCRIPT))} className="min-w-0">{t("デモ文を入力", "Insert demo text")}</Button>
                 <Button
                   size="sm"
                   variant="primary"
                   isDisabled={!currentTranscript.trim() || Boolean(processingStage)}
-                  onPress={mode === "reflection" ? startAssessment : () => onAddSchedule()}
+                  onPress={combinedCheckInAvailable ? handleCombinedPrimaryAction : mode === "reflection" ? startAssessment : () => onAddSchedule()}
                   className={`ml-auto min-w-20 text-white ${mode === "reflection" ? "bg-[#5b42ff]" : "bg-[#168f78]"}`}
                 >
-                  {mode === "reflection" ? t("負荷確認へ", "Continue to load check") : t("予定を追加", "Add plans")}
+                  {combinedCheckInAvailable ? mode === "reflection" ? t("STEP 2へ", "Continue to STEP 2") : t("負荷確認へ", "Continue to load check") : mode === "reflection" ? t("負荷確認へ", "Continue to load check") : t("予定を追加", "Add plans")}
                 </Button>
               </div>
             </div>
           </details>
         ) : null}
 
-        {mode === "planning" ? (
+        {mode === "planning" && !combinedCheckInAvailable ? (
           <section className="mt-5 border-t border-[#e7e8f0] pt-5">
             <div className="flex items-center justify-between gap-3">
               <div><h2 className="text-sm font-bold">{t("追加済みの明日の予定", "Tomorrow's saved plans")}</h2><p className="mt-1 text-xs text-[#68708f]">{tomorrowTaskCount}件</p></div>
@@ -511,7 +567,7 @@ export function CheckInView(props: CheckInViewProps) {
       {transcriptReview ? (
         <TranscriptReviewPanel
           review={transcriptReview}
-          audioBlob={audioByMode[transcriptReview.mode]}
+          audioBlobs={reviewAudioBlobs}
           processingStage={processingStage}
           error={error}
           onChange={onTranscriptReviewChange}

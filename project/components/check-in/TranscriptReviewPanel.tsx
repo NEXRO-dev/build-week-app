@@ -14,7 +14,7 @@ import type { TranscriptReview } from "@/types/echly";
 
 type Props = {
   review: TranscriptReview;
-  audioBlob: Blob | null;
+  audioBlobs: Array<{ label: string; blob: Blob }>;
   processingStage: string | null;
   error: string | null;
   onChange: (value: string) => void;
@@ -35,7 +35,7 @@ function qualityMessage(review: TranscriptReview) {
 
 export function TranscriptReviewPanel({
   review,
-  audioBlob,
+  audioBlobs,
   processingStage,
   error,
   onChange,
@@ -43,16 +43,19 @@ export function TranscriptReviewPanel({
   onRetry,
   onClose,
 }: Props) {
-  const audioUrl = useMemo(
-    () => (audioBlob ? URL.createObjectURL(audioBlob) : null),
-    [audioBlob],
+  const audioItems = useMemo(
+    () => audioBlobs.map((item) => ({
+      ...item,
+      url: URL.createObjectURL(item.blob),
+    })),
+    [audioBlobs],
   );
 
   useEffect(
     () => () => {
-      if (audioUrl) URL.revokeObjectURL(audioUrl);
+      audioItems.forEach((item) => URL.revokeObjectURL(item.url));
     },
-    [audioUrl],
+    [audioItems],
   );
 
   const confidenceLabel =
@@ -101,13 +104,20 @@ export function TranscriptReviewPanel({
             </p>
           ) : null}
 
-          {audioUrl ? (
-            <audio
-              controls
-              src={audioUrl}
-              className="mt-4 h-10 w-full"
-              aria-label="録音した音声"
-            />
+          {audioItems.length ? (
+            <div className="mt-4 grid gap-3">
+              {audioItems.map((item) => (
+                <div key={item.label}>
+                  <p className="mb-1 text-xs font-bold text-[#59617d]">{item.label}</p>
+                  <audio
+                    controls
+                    src={item.url}
+                    className="h-10 w-full"
+                    aria-label={item.label}
+                  />
+                </div>
+              ))}
+            </div>
           ) : null}
 
           {alternatives.length > 1 ? (
