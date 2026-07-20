@@ -223,13 +223,54 @@ function isValidTimeZone(value: string | null): value is string {
 
 type EchlyAppProps = {
   todayLabel: string;
+  initialView?: WorkspaceView;
 };
 
-export function EchlyApp({ todayLabel: serverTodayLabel }: EchlyAppProps) {
+const WORKSPACE_VIEWS: WorkspaceView[] = [
+  "checkin",
+  "analysis",
+  "plan",
+  "approval",
+  "history",
+  "settings",
+];
+
+function workspaceViewFromHistoryState(value: unknown): WorkspaceView | null {
+  if (!value || typeof value !== "object") return null;
+  const candidate = (value as { echlyView?: unknown }).echlyView;
+  return WORKSPACE_VIEWS.includes(candidate as WorkspaceView)
+    ? candidate as WorkspaceView
+    : null;
+}
+
+function workspaceViewFromPathname(pathname: string): WorkspaceView | null {
+  const match = pathname.match(
+    /^\/(?:jp-ja|us-en)(?:\/(analysis|plan(?:\/approval)?|history|setting))?\/?$/,
+  );
+  if (!match) return null;
+  if (!match[1]) return "checkin";
+  if (match[1] === "analysis") return "analysis";
+  if (match[1] === "plan") return "plan";
+  if (match[1] === "plan/approval") return "approval";
+  if (match[1] === "history") return "history";
+  return "settings";
+}
+
+function workspacePath(localePath: string, view: WorkspaceView) {
+  if (view === "checkin") return localePath;
+  if (view === "approval") return `${localePath}/plan/approval`;
+  if (view === "settings") return `${localePath}/setting`;
+  return `${localePath}/${view}`;
+}
+
+export function EchlyApp({
+  todayLabel: serverTodayLabel,
+  initialView = "checkin",
+}: EchlyAppProps) {
   const { isEnglish, t } = useI18n();
   const { data: session, isPending: isSessionPending } = authClient.useSession();
   const sessionUserId = session?.user.id ?? null;
-  const [view, setView] = useState<WorkspaceView>("checkin");
+  const [view, setView] = useState<WorkspaceView>(initialView);
   const [transcriptByMode, setTranscriptByMode] = useState<Record<CheckInMode, string>>({
     reflection: "",
     planning: "",
@@ -402,6 +443,18 @@ export function EchlyApp({ todayLabel: serverTodayLabel }: EchlyAppProps) {
   useEffect(() => {
     window.scrollTo({ top: 0, behavior: "auto" });
   }, [view]);
+
+  useEffect(() => {
+    const handlePopState = (event: PopStateEvent) => {
+      setView(
+        workspaceViewFromPathname(window.location.pathname)
+          ?? workspaceViewFromHistoryState(event.state)
+          ?? "checkin",
+      );
+    };
+    window.addEventListener("popstate", handlePopState);
+    return () => window.removeEventListener("popstate", handlePopState);
+  }, []);
 
   useEffect(() => {
     if (!session || tabsPreloaded) return;
@@ -926,7 +979,7 @@ export function EchlyApp({ todayLabel: serverTodayLabel }: EchlyAppProps) {
       setSource(resolvedSource);
       setTranscriptReview(null);
       setPendingReflectionReport(null);
-      setView("analysis");
+      handleWorkspaceViewChange("analysis");
     } catch (caught) {
       setError(
         caught instanceof Error
@@ -1120,7 +1173,7 @@ export function EchlyApp({ todayLabel: serverTodayLabel }: EchlyAppProps) {
   async function handleCreatePlan() {
     if (!activeAnalysis) {
       setError("今日の振り返りを完了すると、負荷に合わせたプランを作成できます。");
-      setView("checkin");
+      handleWorkspaceViewChange("checkin");
       return;
     }
     setError(null);
@@ -1154,7 +1207,7 @@ export function EchlyApp({ todayLabel: serverTodayLabel }: EchlyAppProps) {
       nextPlan = applySpokenTimesToPlan(nextPlan, planTasks);
       await persistPlan(nextPlan);
       setAppliedActionIds([]);
-      setView("plan");
+      handleWorkspaceViewChange("plan");
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "明日のプランを作成できませんでした。");
     } finally {
@@ -1241,7 +1294,24 @@ export function EchlyApp({ todayLabel: serverTodayLabel }: EchlyAppProps) {
     setTranscriptReview(null);
     setPendingReflectionReport(null);
     setSource("demo");
-    setView("checkin");
+    handleWorkspaceViewChange("checkin");
+  }
+
+  function handleWorkspaceViewChange(nextView: WorkspaceView) {
+    if (nextView === view) return;
+    const localePath = isEnglish ? "/us-en" : "/jp-ja";
+    const nextPath = workspacePath(localePath, nextView);
+    window.history.replaceState(
+      { ...window.history.state, echlyView: view },
+      "",
+      window.location.href,
+    );
+    window.history.pushState(
+      { ...window.history.state, echlyView: nextView },
+      "",
+      nextPath,
+    );
+    setView(nextView);
   }
 
   function renderView(targetView: WorkspaceView) {
@@ -1254,13 +1324,13 @@ export function EchlyApp({ todayLabel: serverTodayLabel }: EchlyAppProps) {
           tasks={uniqueTasks([...activeAnalysis.tasks, ...scheduledTasks])}
           condition={activeAnalysis.condition}
           source={activeSource}
-          onBack={() => setView("checkin")}
+          onBack={() => handleWorkspaceViewChange("checkin")}
           onCreatePlan={handleCreatePlan}
           processingStage={processingStage}
           error={error}
         />
       ) : (
-        <EmptyWorkspaceView type="analysis" onCheckIn={() => setView("checkin")} />
+        <EmptyWorkspaceView type="analysis" onCheckIn={() => handleWorkspaceViewChange("checkin")} />
       );
     }
 
@@ -1269,27 +1339,34 @@ export function EchlyApp({ todayLabel: serverTodayLabel }: EchlyAppProps) {
         <PlanView
           plan={plan}
           onPlanChange={handlePlanChange}
-          onBack={() => setView("analysis")}
-          onApproval={() => setView("approval")}
+          onBack={() => handleWorkspaceViewChange("analysis")}
+          onApproval={() => handleWorkspaceViewChange("approval")}
         />
       ) : (
         <EmptyWorkspaceView
           type="plan"
           hasAnalysis={Boolean(activeAnalysis)}
-          onCheckIn={() => setView("checkin")}
-          onShowAnalysis={() => setView("analysis")}
+          onCheckIn={() => handleWorkspaceViewChange("checkin")}
+          onShowAnalysis={() => handleWorkspaceViewChange("analysis")}
         />
       );
     }
 
-    if (targetView === "approval" && plan) {
-      return (
+    if (targetView === "approval") {
+      return plan ? (
         <ApprovalView
           plan={plan}
           appliedActionIds={appliedActionIds}
           onPlanChange={handlePlanChange}
           onApply={handleApply}
-          onBack={() => setView("plan")}
+          onBack={() => handleWorkspaceViewChange("plan")}
+        />
+      ) : (
+        <EmptyWorkspaceView
+          type="plan"
+          hasAnalysis={Boolean(activeAnalysis)}
+          onCheckIn={() => handleWorkspaceViewChange("checkin")}
+          onShowAnalysis={() => handleWorkspaceViewChange("analysis")}
         />
       );
     }
@@ -1301,7 +1378,11 @@ export function EchlyApp({ todayLabel: serverTodayLabel }: EchlyAppProps) {
     if (targetView === "settings") {
       return (
         <SettingsView
-          user={{ name: signedInUser.name, email: signedInUser.email }}
+          user={{
+            name: signedInUser.name,
+            email: signedInUser.email,
+            image: signedInUser.image,
+          }}
           saveTranscript={saveTranscript}
           onSaveTranscriptChange={handleSaveTranscriptChange}
           timeZone={zonedNow?.timeZone ?? resolveBrowserTimeZone()}
@@ -1363,7 +1444,7 @@ export function EchlyApp({ todayLabel: serverTodayLabel }: EchlyAppProps) {
     : primaryViews.filter((targetView) => targetView === view);
 
   return (
-    <AppShell view={view} onViewChange={setView}>
+    <AppShell view={view} onViewChange={handleWorkspaceViewChange}>
       {viewsToMount.map((targetView) => (
         <div
           key={targetView}
