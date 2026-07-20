@@ -52,6 +52,7 @@ export type EchlyDatabase = {
   echly_user_preferences: {
     user_id: string;
     save_transcript: number;
+    require_calendar_approval: number;
     updated_at: string;
   };
 };
@@ -65,7 +66,7 @@ const databaseGlobal = globalThis as typeof globalThis & {
 // Increment whenever createEchlySchema adds or changes database objects. This
 // ensures a Next.js dev server re-runs migrations after a hot reload instead of
 // reusing a schema promise created by an older version of this module.
-const ECHLY_SCHEMA_VERSION = 3;
+const ECHLY_SCHEMA_VERSION = 4;
 
 export const database =
   databaseGlobal.echlyDatabase ??
@@ -212,6 +213,21 @@ async function createEchlySchema() {
     .addColumn("save_transcript", "integer", (column) =>
       column.notNull().defaultTo(1),
     )
+    .addColumn("require_calendar_approval", "integer", (column) =>
+      column.notNull().defaultTo(1),
+    )
     .addColumn("updated_at", "text", (column) => column.notNull())
     .execute();
+
+  const preferenceColumns = await sql<{ name: string }>`
+    PRAGMA table_info(echly_user_preferences)
+  `.execute(database);
+  if (!preferenceColumns.rows.some((column) => column.name === "require_calendar_approval")) {
+    await database.schema
+      .alterTable("echly_user_preferences")
+      .addColumn("require_calendar_approval", "integer", (column) =>
+        column.notNull().defaultTo(1),
+      )
+      .execute();
+  }
 }

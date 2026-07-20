@@ -1,4 +1,6 @@
-import { nextDateKey } from "@/lib/date/localTime";
+import { nextDateKey } from "../date/localTime.ts";
+
+export type NotificationKind = "evening" | "follow_up";
 
 type ZonedParts = {
   dateKey: string;
@@ -49,9 +51,14 @@ export function getZonedParts(date: Date, timeZone: string): ZonedParts {
   };
 }
 
-function localTimeToUtc(dateKey: string, hour: number, timeZone: string) {
+export function localTimeToUtc(
+  dateKey: string,
+  hour: number,
+  minute: number,
+  timeZone: string,
+) {
   const [year, month, day] = dateKey.split("-").map(Number);
-  const targetAsUtc = Date.UTC(year, month - 1, day, hour, 0, 0);
+  const targetAsUtc = Date.UTC(year, month - 1, day, hour, minute, 0);
   let candidate = targetAsUtc;
 
   // Convert by repeatedly correcting the difference between the desired wall
@@ -78,12 +85,40 @@ function localTimeToUtc(dateKey: string, hour: number, timeZone: string) {
 export function getNextNotificationAt(now: Date, timeZone: string) {
   const local = getZonedParts(now, timeZone);
   const targetDate = local.hour < 20 ? local.dateKey : nextDateKey(local.dateKey);
-  return localTimeToUtc(targetDate, 20, timeZone);
+  return localTimeToUtc(targetDate, 20, 0, timeZone);
+}
+
+export function getFollowUpNotificationAt(now: Date, timeZone: string) {
+  const local = getZonedParts(now, timeZone);
+  return localTimeToUtc(local.dateKey, 23, 30, timeZone);
 }
 
 export function getFollowingNotificationAt(now: Date, timeZone: string) {
   const local = getZonedParts(now, timeZone);
-  return localTimeToUtc(nextDateKey(local.dateKey), 20, timeZone);
+  return localTimeToUtc(nextDateKey(local.dateKey), 20, 0, timeZone);
+}
+
+export function getNextNotificationScheduleAfterProcessing(
+  processedAt: Date,
+  timeZone: string,
+  currentKind: NotificationKind,
+  scheduledAt: Date = processedAt,
+) {
+  const followUpAt = getFollowUpNotificationAt(scheduledAt, timeZone);
+  if (
+    currentKind === "evening" &&
+    followUpAt.getTime() > processedAt.getTime()
+  ) {
+    return { at: followUpAt, kind: "follow_up" as const };
+  }
+
+  const followingEveningAt = getFollowingNotificationAt(scheduledAt, timeZone);
+  return {
+    at: followingEveningAt.getTime() > processedAt.getTime()
+      ? followingEveningAt
+      : getNextNotificationAt(processedAt, timeZone),
+    kind: "evening" as const,
+  };
 }
 
 export function getLocalDateKey(now: Date, timeZone: string) {

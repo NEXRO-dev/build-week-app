@@ -71,7 +71,10 @@ type WorkspaceData = {
   historyTranscripts: HistoryTranscriptEntry[];
   scheduleEntries: ScheduleEntry[];
   plans: PlanRecord[];
-  preferences: { saveTranscript: boolean };
+  preferences: {
+    saveTranscript: boolean;
+    requireCalendarApproval: boolean;
+  };
 };
 
 class ApiClientError extends Error {
@@ -365,6 +368,10 @@ export function EchlyApp({
   const [zonedNow, setZonedNow] = useState<ZonedNow | null>(null);
   const [debugTimeZone, setDebugTimeZone] = useState<string | null>(null);
   const [tabsPreloaded, setTabsPreloaded] = useState(false);
+  const [workspacePreferences, setWorkspacePreferences] = useState<WorkspaceData["preferences"]>({
+    saveTranscript: true,
+    requireCalendarApproval: true,
+  });
   const checkInWriteQueueRef = useRef<Promise<void>>(Promise.resolve());
   const planWriteQueueRef = useRef<Promise<void>>(Promise.resolve());
 
@@ -523,6 +530,7 @@ export function EchlyApp({
           setHistoryTranscripts(mergedHistoryTranscripts);
           setScheduleEntries(mergedSchedules);
           setPlanRecords(workspace.plans ?? []);
+          setWorkspacePreferences(workspace.preferences);
         }
       } catch (caught) {
         if (!cancelled) {
@@ -1540,6 +1548,24 @@ export function EchlyApp({
     }
   }
 
+  async function handleCalendarApprovalChange(requireCalendarApproval: boolean) {
+    const previousPreferences = workspacePreferences;
+    const nextPreferences = { ...previousPreferences, requireCalendarApproval };
+    setWorkspacePreferences(nextPreferences);
+
+    try {
+      const response = await fetch("/api/workspace/preferences", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(nextPreferences),
+      });
+      await parseApiResponse(response, isEnglish);
+    } catch (caught) {
+      setWorkspacePreferences(previousPreferences);
+      throw caught;
+    }
+  }
+
   function startNewCheckIn() {
     setSelfReport({});
     setTranscriptByMode({ reflection: "", planning: "" });
@@ -1691,6 +1717,8 @@ export function EchlyApp({
           deviceTimeZone={resolveBrowserTimeZone()}
           debugTimeZone={debugTimeZone}
           onDebugTimeZoneChange={handleDebugTimeZoneChange}
+          requireCalendarApproval={workspacePreferences.requireCalendarApproval}
+          onRequireCalendarApprovalChange={handleCalendarApprovalChange}
         />
       );
     }

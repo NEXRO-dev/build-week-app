@@ -39,6 +39,42 @@ function parsePlanRecord(payload: string): PlanRecord | null {
   }
 }
 
+export async function getDailyInputStatus(
+  userId: string,
+  localDate: string,
+  tomorrowDate: string,
+) {
+  await ensureEchlySchema();
+
+  const [checkIn, scheduleEntry, plan] = await Promise.all([
+    database
+      .selectFrom("echly_check_ins")
+      .select("id")
+      .where("user_id", "=", userId)
+      .where("local_date", "=", localDate)
+      .executeTakeFirst(),
+    database
+      .selectFrom("echly_schedule_entries")
+      .select("id")
+      .where("user_id", "=", userId)
+      .where("target_date", "=", tomorrowDate)
+      .executeTakeFirst(),
+    database
+      .selectFrom("echly_plans")
+      .select("target_date")
+      .where("user_id", "=", userId)
+      .where("target_date", "=", tomorrowDate)
+      .executeTakeFirst(),
+  ]);
+
+  const reflectionEntered = Boolean(checkIn);
+  // The combined daily check-in requires both sections before it is saved.
+  // Standalone schedule entries and persisted plans also count as tomorrow input.
+  const tomorrowEntered = reflectionEntered || Boolean(scheduleEntry) || Boolean(plan);
+
+  return { reflectionEntered, tomorrowEntered };
+}
+
 export async function loadWorkspace(userId: string) {
   await ensureEchlySchema();
 
@@ -87,7 +123,7 @@ export async function loadWorkspace(userId: string) {
       .execute(),
     database
       .selectFrom("echly_user_preferences")
-      .select("save_transcript")
+      .select(["save_transcript", "require_calendar_approval"])
       .where("user_id", "=", userId)
       .executeTakeFirst(),
   ]);
@@ -122,6 +158,9 @@ export async function loadWorkspace(userId: string) {
       .filter((value): value is PlanRecord => value !== null),
     preferences: {
       saveTranscript: preferences ? preferences.save_transcript === 1 : true,
+      requireCalendarApproval: preferences
+        ? preferences.require_calendar_approval === 1
+        : true,
     },
   };
 }
@@ -293,21 +332,25 @@ export async function deletePlanRecord(userId: string, targetDate: string) {
 export async function updateWorkspacePreferences(
   userId: string,
   saveTranscript: boolean,
+  requireCalendarApproval: boolean,
 ) {
   await ensureEchlySchema();
   const updatedAt = new Date().toISOString();
-  const value = saveTranscript ? 1 : 0;
+  const saveTranscriptValue = saveTranscript ? 1 : 0;
+  const requireCalendarApprovalValue = requireCalendarApproval ? 1 : 0;
 
   await database
     .insertInto("echly_user_preferences")
     .values({
       user_id: userId,
-      save_transcript: value,
+      save_transcript: saveTranscriptValue,
+      require_calendar_approval: requireCalendarApprovalValue,
       updated_at: updatedAt,
     })
     .onConflict((conflict) =>
       conflict.column("user_id").doUpdateSet({
-        save_transcript: value,
+        save_transcript: saveTranscriptValue,
+        require_calendar_approval: requireCalendarApprovalValue,
         updated_at: updatedAt,
       }),
     )

@@ -1,8 +1,9 @@
 import { createClient, type Client } from "@libsql/client";
 
 import {
-  getFollowingNotificationAt,
+  getNextNotificationScheduleAfterProcessing,
   getNextNotificationAt,
+  type NotificationKind,
 } from "@/lib/notifications/time";
 
 export type StoredPushSubscription = {
@@ -12,6 +13,7 @@ export type StoredPushSubscription = {
   timeZone: string;
   locale: "jp-ja" | "us-en";
   nextNotificationAt: string;
+  nextNotificationKind: NotificationKind;
 };
 
 let client: Client | null = null;
@@ -39,11 +41,27 @@ async function ensureSchema() {
           locale TEXT NOT NULL DEFAULT 'jp-ja',
           enabled INTEGER NOT NULL DEFAULT 1,
           next_notification_at TEXT NOT NULL,
+          next_notification_kind TEXT NOT NULL DEFAULT 'evening',
           last_notified_local_date TEXT,
           created_at TEXT NOT NULL,
           updated_at TEXT NOT NULL
         )
       `);
+      const columns = await db.execute("PRAGMA table_info(push_subscriptions)");
+      if (!columns.rows.some((row) => String(row.name) === "next_notification_kind")) {
+        try {
+          await db.execute(`
+            ALTER TABLE push_subscriptions
+            ADD COLUMN next_notification_kind TEXT NOT NULL DEFAULT 'evening'
+          `);
+        } catch (error) {
+          // Another serverless instance may complete the same migration after
+          // our PRAGMA check but before this ALTER TABLE reaches Turso.
+          if (!String(error).toLowerCase().includes("duplicate column")) {
+            throw error;
+          }
+        }
+      }
       await db.execute(`
         CREATE INDEX IF NOT EXISTS push_subscriptions_due_idx
         ON push_subscriptions (enabled, next_notification_at)
@@ -69,19 +87,29 @@ export async function savePushSubscription(input: {
 }) {
   await ensureSchema();
   const now = new Date();
+  const nextNotificationAt = getNextNotificationAt(now, input.timeZone);
   await getClient().execute({
     sql: `
       INSERT INTO push_subscriptions (
         endpoint, user_id, subscription_json, time_zone, locale, enabled,
-        next_notification_at, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?)
+        next_notification_at, next_notification_kind, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, 1, ?, 'evening', ?, ?)
       ON CONFLICT(endpoint) DO UPDATE SET
         user_id = excluded.user_id,
         subscription_json = excluded.subscription_json,
-        time_zone = excluded.time_zone,
         locale = excluded.locale,
         enabled = 1,
-        next_notification_at = excluded.next_notification_at,
+        next_notification_at = CASE
+          WHEN push_subscriptions.time_zone <> excluded.time_zone
+            THEN excluded.next_notification_at
+          ELSE push_subscriptions.next_notification_at
+        END,
+        next_notification_kind = CASE
+          WHEN push_subscriptions.time_zone <> excluded.time_zone
+            THEN excluded.next_notification_kind
+          ELSE push_subscriptions.next_notification_kind
+        END,
+        time_zone = excluded.time_zone,
         updated_at = excluded.updated_at
     `,
     args: [
@@ -90,7 +118,7 @@ export async function savePushSubscription(input: {
       JSON.stringify(input.subscription),
       input.timeZone,
       input.locale,
-      getNextNotificationAt(now, input.timeZone).toISOString(),
+      nextNotificationAt.toISOString(),
       now.toISOString(),
       now.toISOString(),
     ],
@@ -113,6 +141,9 @@ function rowToSubscription(row: Record<string, unknown>): StoredPushSubscription
     timeZone: String(row.time_zone),
     locale: row.locale === "us-en" ? "us-en" : "jp-ja",
     nextNotificationAt: String(row.next_notification_at),
+    nextNotificationKind: row.next_notification_kind === "follow_up"
+      ? "follow_up"
+      : "evening",
   };
 }
 
@@ -121,7 +152,7 @@ export async function getDuePushSubscriptions(now: Date, limit = 100) {
   const result = await getClient().execute({
     sql: `
       SELECT endpoint, user_id, subscription_json, time_zone, locale,
-             next_notification_at
+             next_notification_at, next_notification_kind
       FROM push_subscriptions
       WHERE enabled = 1 AND next_notification_at <= ?
       ORDER BY next_notification_at ASC
@@ -145,21 +176,32 @@ export async function claimPushSubscription(subscription: StoredPushSubscription
   return result.rowsAffected === 1;
 }
 
-export async function markPushSubscriptionSent(
+export async function markPushSubscriptionProcessed(
   subscription: StoredPushSubscription,
-  sentAt: Date,
+  processedAt: Date,
   localDate: string,
+  sent: boolean,
 ) {
+  const nextSchedule = getNextNotificationScheduleAfterProcessing(
+    processedAt,
+    subscription.timeZone,
+    subscription.nextNotificationKind,
+    new Date(subscription.nextNotificationAt),
+  );
+
   await getClient().execute({
     sql: `
       UPDATE push_subscriptions
-      SET next_notification_at = ?, last_notified_local_date = ?, updated_at = ?
+      SET next_notification_at = ?, next_notification_kind = ?,
+          last_notified_local_date = COALESCE(?, last_notified_local_date),
+          updated_at = ?
       WHERE endpoint = ?
     `,
     args: [
-      getFollowingNotificationAt(sentAt, subscription.timeZone).toISOString(),
-      localDate,
-      sentAt.toISOString(),
+      nextSchedule.at.toISOString(),
+      nextSchedule.kind,
+      sent ? localDate : null,
+      processedAt.toISOString(),
       subscription.endpoint,
     ],
   });

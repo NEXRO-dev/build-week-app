@@ -14,6 +14,7 @@ export async function PATCH(request: Request) {
     await updateWorkspacePreferences(
       session.user.id,
       preferences.saveTranscript,
+      preferences.requireCalendarApproval,
     );
     return Response.json({ preferences });
   } catch (error) {

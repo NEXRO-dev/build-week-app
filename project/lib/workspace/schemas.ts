@@ -81,6 +81,7 @@ export const PlanRecordSchema = z.object({
 
 export const WorkspacePreferencesSchema = z.object({
   saveTranscript: z.boolean(),
+  requireCalendarApproval: z.boolean(),
 });
 
 export const CheckInWriteSchema = z.object({

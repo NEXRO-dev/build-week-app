@@ -471,14 +471,14 @@ export function HistoryView({
         <section className="rounded-lg border border-[#e3e5ef] p-4">
           <div className="flex items-center justify-between gap-3">
             <h2 className="text-xs font-bold">{t("負荷スコアの推移", "Load score trend")}</h2>
-            <div className="flex rounded-md bg-[#f1f2f7] p-0.5" role="group" aria-label={t("表示期間", "Chart range")}>
+            <div className="flex w-40 gap-2 rounded-full bg-[#f1f2f7] p-0.5" role="group" aria-label={t("表示期間", "Chart range")}>
               {([7, 30] as const).map((range) => (
                 <button
                   key={range}
                   type="button"
                   aria-pressed={chartRange === range}
                   onClick={() => setChartRange(range)}
-                  className={`min-h-7 rounded px-2.5 text-[10px] font-bold transition-colors ${
+                  className={`min-h-7 flex-1 rounded-full px-2.5 text-[10px] font-bold transition-colors ${
                     chartRange === range
                       ? "bg-white text-[#303857] shadow-sm"
                       : "text-[#777e98]"

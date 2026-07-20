@@ -57,7 +57,7 @@ Echlyは「状態を測る」だけでなく、「明日何を守り、何を動
 - Google OAuth and email/password authentication with Better Auth
 - Per-user persistence in Turso without storing raw audio recordings
 - Automatic browser-language detection plus manual Japanese/English switching
-- PWA support and a daily Web Push reminder at 8:00 PM in the user's time zone
+- PWA support, an 8:00 PM local-time Web Push reminder, and a conditional 11:30 PM follow-up when the daily check-in is incomplete
 - A controlled demo fallback when an external AI service is unavailable
 
 ### 日本語
@@ -74,7 +74,7 @@ Echlyは「状態を測る」だけでなく、「明日何を守り、何を動
 - Better AuthによるGoogle OAuthおよびメール／パスワード認証
 - Tursoへのユーザー別データ保存。生の録音音声は保存しない
 - 端末言語の自動判定と日本語／英語の手動切替
-- PWA対応と、端末タイムゾーンの20:00に合わせたWeb Push通知
+- PWA対応、現地時刻20:00のWeb Push通知、未完了時のみ23:30に送る再通知
 - 外部AIサービスが利用できない場合の制御されたデモフォールバック
 
 ## 4. Demo（デモ）

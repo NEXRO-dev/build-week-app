@@ -1,7 +1,7 @@
 "use client";
 
 import { Button, Switch } from "@heroui/react";
-import { Bell, BellOff, Bug, CalendarDays, ChevronRight, Database, LogOut, Mail, ShieldCheck, UserRound } from "lucide-react";
+import { Bell, BellOff, Bug, CalendarDays, ChevronRight, Database, FileText, LogOut, Scale, ShieldCheck, UserRound } from "lucide-react";
 import Image from "next/image";
 import Link from "next/link";
 import { type ReactNode, useEffect, useState } from "react";
@@ -21,6 +21,8 @@ type Props = {
   deviceTimeZone: string;
   debugTimeZone: string | null;
   onDebugTimeZoneChange: (value: string | null) => void;
+  requireCalendarApproval: boolean;
+  onRequireCalendarApprovalChange: (value: boolean) => Promise<void>;
 };
 
 const DEBUG_TIME_ZONES = [
@@ -49,6 +51,8 @@ export function SettingsView({
   deviceTimeZone,
   debugTimeZone,
   onDebugTimeZoneChange,
+  requireCalendarApproval,
+  onRequireCalendarApprovalChange,
 }: Props) {
   const { locale, isEnglish, t } = useI18n();
   const [now, setNow] = useState(() => new Date());
@@ -62,6 +66,8 @@ export function SettingsView({
   >("loading");
   const [notificationBusy, setNotificationBusy] = useState(false);
   const [notificationMessage, setNotificationMessage] = useState<string | null>(null);
+  const [calendarApprovalBusy, setCalendarApprovalBusy] = useState(false);
+  const [calendarApprovalMessage, setCalendarApprovalMessage] = useState<string | null>(null);
   const profileImageUrl =
     user.image && failedAvatarUrl !== user.image ? user.image : null;
 
@@ -209,6 +215,18 @@ export function SettingsView({
     }
   }
 
+  async function handleCalendarApprovalChange(enabled: boolean) {
+    setCalendarApprovalBusy(true);
+    setCalendarApprovalMessage(null);
+    try {
+      await onRequireCalendarApprovalChange(enabled);
+    } catch {
+      setCalendarApprovalMessage(t("設定を保存できませんでした。", "The setting could not be saved."));
+    } finally {
+      setCalendarApprovalBusy(false);
+    }
+  }
+
   return (
     <div>
       <header className="flex h-16 items-center justify-center border-b border-[#ececf3] px-4 pt-[env(safe-area-inset-top)]"><h1 className="text-base font-bold">{t("設定", "Settings")}</h1></header>
@@ -247,7 +265,7 @@ export function SettingsView({
                         : notificationState === "denied"
                           ? t("端末設定で通知がブロックされています", "Notifications are blocked in device settings")
                       : notificationState === "on"
-                        ? t(`毎日20:00（${timeZone}）`, `Daily at 8:00 PM (${timeZone})`)
+                        ? t(`毎日20:00、未完了時は23:30（${timeZone}）`, `Daily at 8:00 PM; 11:30 PM if incomplete (${timeZone})`)
                         : t("現在の端末ではオフです", "Off on this device")}
                 </p>
               </div>
@@ -256,7 +274,7 @@ export function SettingsView({
                 isSelected={notificationState === "on"}
                 isDisabled={notificationBusy || notificationState === "loading" || notificationState === "unsupported" || notificationState === "unconfigured" || notificationState === "denied"}
                 onChange={handleNotificationChange}
-                size="sm"
+                size="lg"
                 className="shrink-0"
               >
                 <Switch.Content><Switch.Control><Switch.Thumb /></Switch.Control></Switch.Content>
@@ -269,10 +287,24 @@ export function SettingsView({
         <section><h2 className="mb-2 text-xs font-bold text-[#4e3ad0]">{t("データとプライバシー", "Data & privacy")}</h2><div className="divide-y divide-[#ececf3] rounded-lg border border-[#e3e5ef]"><Row icon={Database} title={t("クラウド同期", "Cloud sync")} description={t("履歴・予定・設定をアカウントごとに保存", "History, plans, and settings are saved per account")} action={<span className="rounded bg-[#eaf8f2] px-2 py-1 text-[9px] font-bold text-[#23775d]">{t("有効", "On")}</span>} /><Row icon={ShieldCheck} title={t("録音音声は保存しません", "Raw audio is not stored")} description={t("処理後に削除し、文字起こしと音声特徴だけを保存", "Deleted after processing; only transcripts and voice features are saved")} action={<ShieldCheck size={16} className="shrink-0 text-[#23966f]" />} /></div></section>
 
         <section><h2 className="mb-2 text-xs font-bold text-[#4e3ad0]">{t("安全と権限", "Safety & permissions")}</h2><div className="divide-y divide-[#ececf3] rounded-lg border border-[#e3e5ef]">
-          <div className="flex min-w-0 items-center gap-3 px-3 py-3"><ShieldCheck size={18} className="shrink-0 text-[#4d5a84]" /><div className="min-w-0 flex-1"><p className="break-words text-xs font-bold">{t("カレンダー変更は必ず確認", "Always review calendar changes")}</p><p className="mt-1 break-words text-[10px] text-[#727a97]">{t("承認なしでは実行しません", "Nothing runs without your approval")}</p></div><Switch isSelected onChange={() => undefined} size="sm" className="shrink-0"><Switch.Content><Switch.Control><Switch.Thumb /></Switch.Control></Switch.Content></Switch></div>
-          <div className="flex min-w-0 items-center gap-3 px-3 py-3"><Mail size={18} className="shrink-0 text-[#4d5a84]" /><div className="min-w-0 flex-1"><p className="break-words text-xs font-bold">{t("メールは下書き保存のみ", "Save emails as drafts only")}</p><p className="mt-1 break-words text-[10px] text-[#727a97]">{t("送信はしません", "Echly never sends them")}</p></div><Switch isSelected onChange={() => undefined} size="sm" className="shrink-0"><Switch.Content><Switch.Control><Switch.Thumb /></Switch.Control></Switch.Content></Switch></div>
+          <div className="px-3 py-3">
+            <div className="flex min-w-0 items-center gap-3"><ShieldCheck size={18} className="shrink-0 text-[#4d5a84]" /><div className="min-w-0 flex-1"><p className="break-words text-xs font-bold">{t("カレンダー変更前に確認", "Review calendar changes")}</p><p className="mt-1 break-words text-[10px] text-[#727a97]">{requireCalendarApproval ? t("変更前に承認を求めます", "Approval is required before changes") : t("事前確認をオフにしています", "Pre-approval is turned off")}</p></div><Switch aria-label={t("カレンダー変更前に確認", "Review calendar changes")} isSelected={requireCalendarApproval} isDisabled={calendarApprovalBusy} onChange={(enabled) => void handleCalendarApprovalChange(enabled)} size="lg" className="shrink-0"><Switch.Content><Switch.Control><Switch.Thumb /></Switch.Control></Switch.Content></Switch></div>
+            {calendarApprovalMessage ? <p role="status" className="mt-2 pl-[30px] text-[10px] leading-4 text-[#b34848]">{calendarApprovalMessage}</p> : null}
+          </div>
           <div className="flex min-w-0 items-center gap-3 px-3 py-3"><Database size={18} className="shrink-0 text-[#4d5a84]" /><div className="min-w-0 flex-1"><p className="break-words text-xs font-bold">{t("文字起こしを履歴に保存", "Save transcripts to history")}</p><p className="mt-1 break-words text-[10px] text-[#727a97]">{t("振り返りと予定・タスクの文字起こしを保存", "Reflection and planning/task transcripts are saved")}</p></div><span className="rounded bg-[#eaf8f2] px-2 py-1 text-[9px] font-bold text-[#23775d]">{t("有効", "On")}</span></div>
         </div></section>
+
+        <section>
+          <h2 className="mb-2 text-xs font-bold">{t("法務", "Legal")}</h2>
+          <div className="divide-y divide-[#ececf3] overflow-hidden rounded-lg border border-[#e3e5ef]">
+            <Link href={`/${locale}/terms`} className="block transition-colors hover:bg-[#fafaff] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#6a50ff]">
+              <Row icon={Scale} title={t("利用規約", "Terms of Service")} description={t("サービス利用時のルール", "Rules for using Echly")} />
+            </Link>
+            <Link href={`/${locale}/privacy`} className="block transition-colors hover:bg-[#fafaff] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#6a50ff]">
+              <Row icon={FileText} title={t("プライバシーポリシー", "Privacy Policy")} description={t("個人情報とデータの取り扱い", "How personal information and data are handled")} />
+            </Link>
+          </div>
+        </section>
 
         <section>
           <div className="mb-2 flex items-center justify-between gap-3">

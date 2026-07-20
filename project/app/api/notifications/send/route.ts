@@ -1,11 +1,14 @@
 import {
   claimPushSubscription,
   getDuePushSubscriptions,
-  markPushSubscriptionSent,
+  markPushSubscriptionProcessed,
   removeExpiredPushSubscription,
 } from "@/lib/notifications/store";
+import { nextDateKey } from "@/lib/date/localTime";
+import { getReminderPayload } from "@/lib/notifications/reminder";
 import { getLocalDateKey } from "@/lib/notifications/time";
 import { isWebPushConfigured, sendWebPush } from "@/lib/notifications/webPush";
+import { getDailyInputStatus } from "@/lib/workspace/repository";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -24,19 +27,59 @@ export async function GET(request: Request) {
   let sent = 0;
   let expired = 0;
   let failed = 0;
+  let skipped = 0;
+  const inputStatusByUserAndDate = new Map<
+    string,
+    Promise<{ reflectionEntered: boolean; tomorrowEntered: boolean }>
+  >();
 
   for (const subscription of due) {
     if (!(await claimPushSubscription(subscription, now))) continue;
     try {
+      const localDate = getLocalDateKey(
+        new Date(subscription.nextNotificationAt),
+        subscription.timeZone,
+      );
+      const tomorrowDate = nextDateKey(localDate);
+      let payload;
+
+      if (subscription.nextNotificationKind === "follow_up") {
+        const statusKey = `${subscription.userId}:${localDate}`;
+        let statusPromise = inputStatusByUserAndDate.get(statusKey);
+        if (!statusPromise) {
+          statusPromise = getDailyInputStatus(
+            subscription.userId,
+            localDate,
+            tomorrowDate,
+          );
+          inputStatusByUserAndDate.set(statusKey, statusPromise);
+        }
+        const status = await statusPromise;
+        payload = getReminderPayload("follow_up", subscription.locale, status);
+        if (!payload) {
+          await markPushSubscriptionProcessed(
+            subscription,
+            now,
+            localDate,
+            false,
+          );
+          skipped += 1;
+          continue;
+        }
+      } else {
+        payload = getReminderPayload("evening", subscription.locale);
+      }
+
+      if (!payload) continue;
       await sendWebPush(subscription.subscription, {
-        title: subscription.locale === "us-en" ? "Time to reflect on today" : "今日を振り返る時間です",
-        body: subscription.locale === "us-en" ? "Check in with Echly and make tomorrow a little lighter." : "Echlyでチェックインして、明日を少し軽く整えましょう。",
+        ...payload,
         url: `/${subscription.locale}`,
       });
-      await markPushSubscriptionSent(
+      await markPushSubscriptionProcessed(
         subscription,
         now,
-        getLocalDateKey(now, subscription.timeZone),
+        localDate,
+        true,
       );
       sent += 1;
     } catch (error) {
@@ -53,5 +96,5 @@ export async function GET(request: Request) {
     }
   }
 
-  return Response.json({ checked: due.length, sent, expired, failed });
+  return Response.json({ checked: due.length, sent, skipped, expired, failed });
 }

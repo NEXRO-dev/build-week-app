@@ -221,7 +221,7 @@ export function NotificationBell({ timeZone }: { timeZone: string }) {
                     <h2 className="text-sm font-bold">{t("夜のチェックイン通知", "Evening check-in reminder")}</h2>
                     <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${state === "on" ? "bg-[#e9f8f1] text-[#19795d]" : "bg-[#f0f1f5] text-[#68708f]"}`}>{statusLabel}</span>
                   </div>
-                  <p className="mt-1 text-xs leading-5 text-[#68708f]">{t("毎日、あなたの現地時刻20:00に振り返りをお知らせします。", "We'll remind you to reflect every day at 8:00 PM local time.")}</p>
+                  <p className="mt-1 text-xs leading-5 text-[#68708f]">{t("毎日、現地時刻20:00にお知らせします。未入力の場合は23:30にもう一度お知らせします。", "We'll remind you at 8:00 PM local time and again at 11:30 PM if your check-in is incomplete.")}</p>
                 </div>
               </div>
 
