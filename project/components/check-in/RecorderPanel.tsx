@@ -158,7 +158,7 @@ export function RecorderPanel({
         <div className="mt-3 flex max-w-full flex-wrap items-center justify-center gap-2">
           <Tooltip><Tooltip.Trigger><Button isIconOnly size="sm" variant="outline" aria-label={t("録音を破棄", "Discard recording")} onPress={onDiscard}><Trash2 size={16} /></Button></Tooltip.Trigger><Tooltip.Content>{t("録音を破棄", "Discard recording")}</Tooltip.Content></Tooltip>
           <Tooltip><Tooltip.Trigger><Button isIconOnly size="sm" variant="outline" aria-label={t("もう一度録音", "Record again")} onPress={startRecording}><RotateCcw size={16} /></Button></Tooltip.Trigger><Tooltip.Content>{t("もう一度録音", "Record again")}</Tooltip.Content></Tooltip>
-          <Button size="sm" variant="primary" onPress={onPrimaryAction} isDisabled={isProcessing || isPrimaryDisabled} className={`min-w-20 text-white ${colors.primary}`}>{primaryActionLabel}</Button>
+          <Button size="sm" variant="primary" onPress={() => onPrimaryAction()} isDisabled={isProcessing || isPrimaryDisabled} className={`min-w-20 text-white ${colors.primary}`}>{primaryActionLabel}</Button>
         </div>
       ) : null}
       {audioBlob && qualityHint ? <p className="mt-2 max-w-full text-center text-xs font-medium text-[#9a5b10]">{qualityHint}</p> : null}

@@ -231,8 +231,8 @@ function noSpeechResponse(
   return Response.json(
     {
       error: isEnglish
-        ? "Could not recognize speech in " + recordingLabel + ". Check the microphone level and record again."
-        : recordingLabel + "の音声を認識できませんでした。マイク音量を確認し、もう一度録音してください。",
+        ? "Could not transcribe " + recordingLabel + ". Your recording is still available—play it back, record again, or add the details as text."
+        : recordingLabel + "の音声を文字にできませんでした。録音は残っています。再生して確認し、もう一度録音するか「テキストで入力」をお試しください。",
       code: "NO_SPEECH_DETECTED",
     },
     { status: 422 },
@@ -243,19 +243,21 @@ async function transcribeWithWhisper(
   audioBase64: string,
   language: "ja" | "en",
   initialPrompt: string,
+  mode: "standard" | "relaxed" = "standard",
 ) {
+  const relaxed = mode === "relaxed";
   const result = await runCloudflareModel(model, {
     audio: audioBase64,
     task: "transcribe",
     language,
     initial_prompt: initialPrompt,
-    vad_filter: true,
+    vad_filter: !relaxed,
     beam_size: 10,
     condition_on_previous_text: false,
-    no_speech_threshold: 0.5,
+    no_speech_threshold: relaxed ? 0.8 : 0.5,
     compression_ratio_threshold: 2.4,
-    log_prob_threshold: -1.2,
-    hallucination_silence_threshold: 1.5,
+    log_prob_threshold: relaxed ? -1.5 : -1.2,
+    hallucination_silence_threshold: relaxed ? 2 : 1.5,
   });
   const transcript = extractWhisperTranscription(result);
   return {
@@ -381,6 +383,28 @@ export async function POST(request: Request) {
         );
       } catch (fallbackError) {
         if (!primaryCandidate) throw primaryError ?? fallbackError;
+      }
+    }
+
+    if (!candidates.some(isUsable)) {
+      const relaxedWhisperModel = [fallbackModel, primaryModel].find((model) =>
+        model.includes("/whisper"),
+      );
+
+      if (relaxedWhisperModel) {
+        try {
+          candidates.push(
+            await transcribeWithWhisper(
+              relaxedWhisperModel,
+              audioBase64,
+              language,
+              initialPrompt,
+              "relaxed",
+            ),
+          );
+        } catch (relaxedError) {
+          if (candidates.length === 0) throw primaryError ?? relaxedError;
+        }
       }
     }
 

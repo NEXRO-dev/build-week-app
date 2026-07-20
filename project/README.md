@@ -42,6 +42,27 @@ openssl rand -base64 48
 npx auth@latest migrate
 ```
 
+## Daily Push notifications
+
+The bell on the Home screen lets each signed-in user enable a daily reminder at 20:00 in their browser time zone. Push subscriptions are stored in Turso, and the scheduled route in `vercel.json` checks for due reminders every minute.
+
+Generate a VAPID key pair:
+
+```bash
+npx web-push generate-vapid-keys
+```
+
+Add the generated keys and a random cron secret to local and production environment variables:
+
+```text
+NEXT_PUBLIC_VAPID_PUBLIC_KEY=...
+VAPID_PRIVATE_KEY=...
+VAPID_SUBJECT=mailto:notifications@example.com
+CRON_SECRET=...
+```
+
+On iPhone and iPad, Web Push requires iOS/iPadOS 16.4 or later and Echly must be installed on the Home Screen. The app refreshes a saved subscription's time zone whenever it opens, so the next reminder follows the user when they travel.
+
 You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
 
 This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.

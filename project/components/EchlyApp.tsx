@@ -95,7 +95,7 @@ async function parseApiResponse<T>(
       UNAUTHORIZED: "Please sign in to continue.",
       AUDIO_REQUIRED: "An audio file is required.",
       AUDIO_TOO_LARGE: "Audio files must be 4 MB or smaller.",
-      NO_SPEECH_DETECTED: "No speech was recognized. Check the microphone level and record again.",
+      NO_SPEECH_DETECTED: "The recording could not be transcribed. Play it back, record again, or add the details as text.",
       CLOUDFLARE_CONFIG_MISSING: "AI processing is not configured yet.",
       CLOUDFLARE_AUTH_FAILED: "The AI service credentials could not be verified.",
       CLOUDFLARE_LIMIT_REACHED: "The AI usage limit has been reached. Please try again later.",
@@ -457,13 +457,6 @@ export function EchlyApp({ todayLabel: serverTodayLabel }: EchlyAppProps) {
         });
         return null;
       } catch (caught) {
-        if (
-          caught instanceof ApiClientError &&
-          caught.code === "NO_SPEECH_DETECTED"
-        ) {
-          handleAudioDiscard(mode);
-          setRetryRecordingMode(mode);
-        }
         if (canUseDemoFallback(caught) && typed) return typed;
         throw caught;
       }

@@ -37,6 +37,8 @@ body {
   margin: 0;
   min-width: 320px;
   overscroll-behavior-y: none;
+  -webkit-user-select: none;
+  user-select: none;
 }
 
 button,
@@ -45,6 +47,14 @@ textarea,
 select {
   font: inherit;
   letter-spacing: 0;
+}
+
+input,
+textarea,
+select,
+[contenteditable="true"] {
+  -webkit-user-select: text;
+  user-select: text;
 }
 
 button:not(:disabled) {
@@ -211,20 +221,6 @@ button:not(:disabled) {
   }
   100% {
     box-shadow: 0 0 0 0 rgba(91, 66, 255, 0);
-  }
-}
-
-@media (display-mode: standalone) {
-  body {
-    -webkit-user-select: none;
-    user-select: none;
-  }
-
-  input,
-  textarea,
-  select {
-    -webkit-user-select: text;
-    user-select: text;
   }
 }
 

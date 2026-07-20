@@ -4,7 +4,6 @@ import { Button, Label, TextArea, TextField } from "@heroui/react";
 import {
   Activity,
   ArrowLeft,
-  Bell,
   CalendarCheck,
   Check,
   Clock3,
@@ -23,6 +22,7 @@ import {
 } from "@/lib/demo/sampleCheckIns";
 import { useI18n } from "@/lib/i18n";
 import { isTomorrowActionableTask } from "@/lib/tasks/temporal";
+import { NotificationBell } from "@/components/notifications/NotificationBell";
 import type {
   AudioMeta,
   ConditionSignal,
@@ -270,7 +270,7 @@ export function CheckInView(props: CheckInViewProps) {
           <span className="echly-logo" aria-hidden="true"><i /><i /><i /></span>
           Echly
         </button>
-        <button type="button" aria-label="通知" className="grid size-10 place-items-center text-[#555d7d] active:scale-95"><Bell size={20} /></button>
+        <NotificationBell timeZone={timeZone} />
       </header>
 
       <div className="px-5 pb-8 pt-5">
@@ -349,7 +349,7 @@ export function CheckInView(props: CheckInViewProps) {
             onAudioReady={(blob, meta) => onAudioReady(mode, blob, meta)}
             onDiscard={() => onAudioDiscard(mode)}
             onError={props.onError}
-            onPrimaryAction={mode === "reflection" ? startAssessment : onAddSchedule}
+            onPrimaryAction={mode === "reflection" ? startAssessment : () => onAddSchedule()}
             isProcessing={Boolean(processingStage)}
             idleLabel={mode === "reflection" ? t("今日の振り返りを録音", "Record today's reflection") : t("明日の予定を録音", "Record tomorrow's plans")}
             recordingLabel={t("録音中", "Recording")}
@@ -381,7 +381,7 @@ export function CheckInView(props: CheckInViewProps) {
                   size="sm"
                   variant="primary"
                   isDisabled={!currentTranscript.trim() || Boolean(processingStage)}
-                  onPress={mode === "reflection" ? startAssessment : onAddSchedule}
+                  onPress={mode === "reflection" ? startAssessment : () => onAddSchedule()}
                   className={`ml-auto min-w-20 text-white ${mode === "reflection" ? "bg-[#5b42ff]" : "bg-[#168f78]"}`}
                 >
                   {mode === "reflection" ? t("自己評価へ", "Continue to self-check") : t("予定を追加", "Add plans")}
