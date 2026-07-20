@@ -108,11 +108,5 @@ export function movePlanItemToTime(
       kind === "reschedule"
         ? plan.reschedule.filter((item) => item.id !== itemId)
         : plan.reschedule,
-    emailDrafts:
-      kind === "reschedule" && source.taskId
-        ? plan.emailDrafts.filter(
-            (draft) => draft.relatedTaskId !== source.taskId,
-          )
-        : plan.emailDrafts,
   };
 }

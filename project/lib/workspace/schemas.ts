@@ -51,7 +51,7 @@ export const ScheduleEntryRecordSchema = z.object({
   transcript: z.string().max(12000),
   audioMeta: AudioMetaSchema,
   tasks: z.array(PersistedExtractedTaskSchema).min(1).max(100),
-  source: z.enum(["cloudflare", "demo"]),
+  source: z.enum(["cloudflare", "demo", "manual"]),
 });
 
 export const HistoryTranscriptEntrySchema = z.object({

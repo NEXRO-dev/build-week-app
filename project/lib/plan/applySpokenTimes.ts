@@ -83,9 +83,5 @@ export function applySpokenTimesToPlan(
       (item) => !item.taskId || !timedTaskIds.has(item.taskId),
     ),
     restBlocks,
-    emailDrafts: plan.emailDrafts.filter(
-      (draft) =>
-        !draft.relatedTaskId || !timedTaskIds.has(draft.relatedTaskId),
-    ),
   };
 }

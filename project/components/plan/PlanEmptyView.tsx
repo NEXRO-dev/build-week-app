@@ -1,8 +1,12 @@
 "use client";
 
 import { Button } from "@heroui/react";
-import { CalendarDays, Clock3, LoaderCircle, Plus, Sparkles } from "lucide-react";
+import { CalendarDays, Clock3, LoaderCircle, Sparkles } from "lucide-react";
 
+import {
+  PlanActivityForm,
+  type PlanActivityInput,
+} from "@/components/plan/PlanActivityForm";
 import { useI18n } from "@/lib/i18n";
 import type { ExtractedTask } from "@/types/echly";
 
@@ -13,7 +17,7 @@ type Props = {
   processingStage: string | null;
   error: string | null;
   onCreatePlan: () => void;
-  onAddSchedule: () => void;
+  onAddActivity: (activity: PlanActivityInput) => Promise<void>;
 };
 
 function displayDate(targetDate: string | null, isEnglish: boolean) {
@@ -33,7 +37,7 @@ export function PlanEmptyView({
   processingStage,
   error,
   onCreatePlan,
-  onAddSchedule,
+  onAddActivity,
 }: Props) {
   const { isEnglish, t } = useI18n();
 
@@ -81,19 +85,21 @@ export function PlanEmptyView({
             ))}
           </div>
         ) : (
-          <div className="py-10 text-center">
+          <div className="py-7 text-center">
             <CalendarDays size={28} className="mx-auto text-[#a0a6bb]" />
-            <p className="mt-4 text-sm font-semibold text-[#505875]">
+            <p className="mt-3 text-sm font-semibold text-[#505875]">
               {t("明日の予定はまだありません", "No activities saved for tomorrow")}
-            </p>
-            <p className="mx-auto mt-2 max-w-xs text-xs leading-5 text-[#737b99]">
-              {t(
-                "ホームから明日の予定を話すか入力すると、ここでプランを作成できます。",
-                "Add tomorrow's activities from Home, then create a plan here.",
-              )}
             </p>
           </div>
         )}
+
+        <div className="mt-3">
+          <PlanActivityForm
+            defaultOpen={!tasks.length}
+            disabled={Boolean(processingStage)}
+            onAdd={onAddActivity}
+          />
+        </div>
 
         {tasks.length ? (
           <div className="mt-5 border-t border-[#e7e8f0] pt-5">
@@ -124,21 +130,16 @@ export function PlanEmptyView({
           variant="primary"
           size="lg"
           fullWidth
-          isDisabled={Boolean(processingStage)}
-          onPress={tasks.length ? onCreatePlan : onAddSchedule}
+          isDisabled={!tasks.length || Boolean(processingStage)}
+          onPress={onCreatePlan}
           className="mt-5 h-12 bg-[#5b42ff] text-white"
         >
           {processingStage ? (
             <LoaderCircle size={18} className="animate-spin" />
-          ) : tasks.length ? (
-            <Sparkles size={18} />
           ) : (
-            <Plus size={18} />
+            <Sparkles size={18} />
           )}
-          {processingStage ??
-            (tasks.length
-              ? t("明日のプランを作る", "Create tomorrow's plan")
-              : t("明日の予定を追加", "Add tomorrow's activities"))}
+          {processingStage ?? t("明日のプランを作る", "Create tomorrow's plan")}
         </Button>
       </div>
     </div>

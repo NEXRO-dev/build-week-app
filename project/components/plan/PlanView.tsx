@@ -18,6 +18,10 @@ import {
   type PointerEvent as ReactPointerEvent,
 } from "react";
 
+import {
+  PlanActivityForm,
+  type PlanActivityInput,
+} from "@/components/plan/PlanActivityForm";
 import { useI18n } from "@/lib/i18n";
 import {
   movePlanItemToTime,
@@ -34,6 +38,7 @@ type Props = {
   processingStage: string | null;
   error: string | null;
   onPlanChange: (plan: TomorrowPlan) => void;
+  onAddActivity: (activity: PlanActivityInput) => Promise<void>;
   onBack: () => void;
   onRegenerate: () => void;
   onApproval: () => void;
@@ -163,6 +168,7 @@ export function PlanView({
   processingStage,
   error,
   onPlanChange,
+  onAddActivity,
   onBack,
   onRegenerate,
   onApproval,
@@ -183,10 +189,7 @@ export function PlanView({
   const scheduledBySlot = new Map<string, TimelineItem[]>();
   const unscheduled = [...items.filter((item) => !slotFor(item.time)), ...deferred];
   const actionCount =
-    plan.move.length +
-    plan.reschedule.length +
-    plan.restBlocks.length +
-    plan.emailDrafts.length;
+    plan.move.length + plan.reschedule.length + plan.restBlocks.length;
 
   for (const item of items) {
     const slot = slotFor(item.time);
@@ -328,6 +331,13 @@ export function PlanView({
                 ? t("AI作成", "AI generated")
                 : t("自動作成", "Auto generated")}
           </span>
+        </div>
+
+        <div className="mt-4">
+          <PlanActivityForm
+            disabled={Boolean(processingStage)}
+            onAdd={onAddActivity}
+          />
         </div>
 
         <section className="mt-4">

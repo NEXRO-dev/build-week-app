@@ -13,6 +13,7 @@ import {
 import { HistoryView } from "@/components/history/HistoryView";
 import { AppShell } from "@/components/layout/AppShell";
 import { EmptyWorkspaceView } from "@/components/layout/EmptyWorkspaceView";
+import type { PlanActivityInput } from "@/components/plan/PlanActivityForm";
 import { PlanEmptyView } from "@/components/plan/PlanEmptyView";
 import { PlanView } from "@/components/plan/PlanView";
 import { SettingsView } from "@/components/settings/SettingsView";
@@ -32,7 +33,7 @@ import { authClient } from "@/lib/auth-client";
 import { useI18n } from "@/lib/i18n";
 import { applySpokenTimesToPlan } from "@/lib/plan/applySpokenTimes";
 import { isTomorrowActionableTask } from "@/lib/tasks/temporal";
-import { normalizeExtractedTaskTimes } from "@/lib/tasks/time";
+import { normalizeClockTime, normalizeExtractedTaskTimes } from "@/lib/tasks/time";
 import type {
   AnalysisResult,
   AudioMeta,
@@ -40,6 +41,7 @@ import type {
   ConditionSignal,
   ExtractedTask,
   HistoryTranscriptEntry,
+  PlanItem,
   PlanRecord,
   ScheduleEntry,
   TranscriptReview,
@@ -189,7 +191,6 @@ function emptyPlan(condition: ConditionSignal): TomorrowPlan {
     move: [],
     reschedule: [],
     restBlocks: [],
-    emailDrafts: [],
     rationale: [],
   };
 }
@@ -673,7 +674,7 @@ export function EchlyApp({
 
   const actionCount = useMemo(() => {
     if (!plan) return 0;
-    return plan.move.length + plan.reschedule.length + plan.restBlocks.length + plan.emailDrafts.length;
+    return plan.move.length + plan.reschedule.length + plan.restBlocks.length;
   }, [plan]);
 
   useEffect(() => {
@@ -697,7 +698,6 @@ export function EchlyApp({
         storedPlan.move.length > 0 ||
         storedPlan.reschedule.length > 0 ||
         storedPlan.restBlocks.length > 0 ||
-        storedPlan.emailDrafts.length > 0 ||
         storedPlan.rationale.length > 0;
       if (hasStoredPlan) {
         const restoreId = window.setTimeout(() => {
@@ -1386,8 +1386,127 @@ export function EchlyApp({
     replaceCheckInRecord(updated);
   }
 
+  async function handleAddPlanActivity(activity: PlanActivityInput) {
+    if (!zonedNow || !localDate || !tomorrowDate) {
+      const message = isEnglish
+        ? "The device time zone is still being checked."
+        : "端末のタイムゾーンを確認中です。少し待ってからもう一度お試しください。";
+      setError(message);
+      throw new ApiClientError(message, "TIME_ZONE_REQUIRED");
+    }
+
+    setError(null);
+    setProcessingStage(isEnglish ? "Adding activity..." : "予定を追加中...");
+
+    try {
+      const entryId = newId("schedule");
+      const taskId = entryId + "-manual";
+      const startTime = normalizeClockTime(activity.startTime);
+      const endTime = normalizeClockTime(activity.endTime);
+      const task: ExtractedTask = {
+        id: taskId,
+        title: activity.title,
+        kind: "event",
+        topicType: null,
+        temporalContext: "tomorrow",
+        status: "pending",
+        type: "unknown",
+        date: tomorrowDate,
+        startTime,
+        endTime,
+        deadline: null,
+        people: [],
+        importance: "medium",
+        movable: activity.movable,
+        burden: "medium",
+        sourceText: activity.title,
+      };
+      const entry: ScheduleEntry = {
+        id: entryId,
+        createdAt: new Date().toISOString(),
+        localDate,
+        timeZone: zonedNow.timeZone,
+        targetDate: tomorrowDate,
+        transcript: [startTime, activity.title].filter(Boolean).join(" "),
+        audioMeta: { ...EMPTY_AUDIO_META },
+        tasks: [task],
+        source: "manual",
+      };
+
+      await saveScheduleEntry(entry);
+      replaceScheduleEntry(entry);
+
+      if (plan) {
+        const item: PlanItem = {
+          id: "keep-" + task.id,
+          taskId: task.id,
+          title: task.title,
+          originalTime: startTime,
+          proposedTime: startTime,
+          endTime,
+          reason: isEnglish
+            ? "Added directly from the plan."
+            : "プラン画面から追加された予定です。",
+          impact: "medium",
+        };
+        await persistPlan({
+          ...plan,
+          keep: [...plan.keep, item],
+        });
+      }
+    } catch (caught) {
+      setError(
+        caught instanceof Error
+          ? caught.message
+          : isEnglish
+            ? "The activity could not be added."
+            : "予定を追加できませんでした。",
+      );
+      throw caught;
+    } finally {
+      setProcessingStage(null);
+    }
+  }
+
+  async function synchronizeScheduleEntriesWithPlan(nextPlan: TomorrowPlan) {
+    const planItems = [...nextPlan.keep, ...nextPlan.move, ...nextPlan.reschedule];
+    const byTaskId = new Map(
+      planItems.flatMap((item) =>
+        item.taskId ? ([[item.taskId, item]] as const) : [],
+      ),
+    );
+    const updates: ScheduleEntry[] = [];
+
+    for (const entry of scheduleEntries) {
+      let changed = false;
+      const tasks = entry.tasks.map((task) => {
+        const item = byTaskId.get(task.id);
+        if (!item) return task;
+        const startTime = normalizeClockTime(
+          item.proposedTime ?? item.originalTime,
+        );
+        if (!startTime) return task;
+        const endTime = normalizeClockTime(item.endTime) ?? task.endTime;
+        if (task.startTime === startTime && task.endTime === endTime) {
+          return task;
+        }
+        changed = true;
+        return { ...task, startTime, endTime };
+      });
+
+      if (changed) updates.push({ ...entry, tasks });
+    }
+
+    for (const entry of updates) {
+      await saveScheduleEntry(entry);
+      replaceScheduleEntry(entry);
+    }
+  }
   function handlePlanChange(nextPlan: TomorrowPlan) {
-    void persistPlan(nextPlan).catch((caught) => {
+    void (async () => {
+      await persistPlan(nextPlan);
+      await synchronizeScheduleEntriesWithPlan(nextPlan);
+    })().catch((caught) => {
       setError(
         caught instanceof Error
           ? caught.message
@@ -1655,6 +1774,7 @@ export function EchlyApp({
           processingStage={processingStage}
           error={error}
           onPlanChange={handlePlanChange}
+          onAddActivity={handleAddPlanActivity}
           onBack={() => handleWorkspaceViewChange("checkin")}
           onRegenerate={handleCreatePlan}
           onApproval={() => handleWorkspaceViewChange("approval")}
@@ -1667,7 +1787,7 @@ export function EchlyApp({
           processingStage={processingStage}
           error={error}
           onCreatePlan={handleCreatePlan}
-          onAddSchedule={() => handleWorkspaceViewChange("checkin")}
+          onAddActivity={handleAddPlanActivity}
         />
       );
     }
@@ -1677,7 +1797,6 @@ export function EchlyApp({
         <ApprovalView
           plan={plan}
           appliedActionIds={appliedActionIds}
-          onPlanChange={handlePlanChange}
           onApply={handleApply}
           onBack={() => handleWorkspaceViewChange("plan")}
         />

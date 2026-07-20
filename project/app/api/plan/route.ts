@@ -30,8 +30,8 @@ export async function POST(request: Request) {
       const generated = await runCloudflareStructuredOutput({
         systemPrompt: `${PLAN_SYSTEM_PROMPT}\n\n${
           input.locale === "us-en"
-            ? "IMPORTANT: Return every user-facing string, reason, and email draft in natural US English."
-            : "重要: ユーザー向けの文章、理由、メール下書きはすべて自然な日本語で返してください。"
+            ? "IMPORTANT: Return every user-facing string and reason in natural US English."
+            : "重要: ユーザー向けの文章と理由はすべて自然な日本語で返してください。"
         }`,
         input: { ...input, tasks: tomorrowTasks },
         schema: PlanGenerationSchema,

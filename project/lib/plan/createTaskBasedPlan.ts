@@ -209,7 +209,6 @@ export function createTaskBasedPlan(
     move,
     reschedule,
     restBlocks: rest ? [rest] : [],
-    emailDrafts: [],
     rationale,
   };
 }
@@ -250,19 +249,10 @@ export function completePlanWithTasks(
     }
   }
 
-  const rescheduledTaskIds = new Set(
-    reschedule.flatMap((item) => (item.taskId ? [item.taskId] : [])),
-  );
-
   return {
     ...generated,
     keep,
     move,
     reschedule,
-    emailDrafts: generated.emailDrafts.filter(
-      (draft) =>
-        draft.relatedTaskId !== null &&
-        rescheduledTaskIds.has(draft.relatedTaskId),
-    ),
   };
 }

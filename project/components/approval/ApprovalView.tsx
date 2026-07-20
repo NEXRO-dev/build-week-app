@@ -1,7 +1,7 @@
 "use client";
 
 import { Button, Checkbox } from "@heroui/react";
-import { ArrowDown, ArrowLeft, CalendarDays, Check, Mail } from "lucide-react";
+import { ArrowDown, ArrowLeft, CalendarDays, Check } from "lucide-react";
 import { useMemo, useState } from "react";
 
 import { useI18n } from "@/lib/i18n";
@@ -10,13 +10,12 @@ import type { TomorrowPlan } from "@/types/echly";
 type Props = {
   plan: TomorrowPlan;
   appliedActionIds: string[];
-  onPlanChange: (plan: TomorrowPlan) => void;
   onApply: (ids: string[]) => void;
   onBack: () => void;
 };
 
 function actionIds(plan: TomorrowPlan) {
-  return [...plan.move, ...plan.reschedule, ...plan.restBlocks, ...plan.emailDrafts].map(
+  return [...plan.move, ...plan.reschedule, ...plan.restBlocks].map(
     (item) => item.id,
   );
 }
@@ -136,36 +135,10 @@ export function ApprovalView({ plan, appliedActionIds, onApply, onBack }: Props)
           </div>
         </section>
 
-        {plan.emailDrafts.map((draft) => (
-          <section key={draft.id} className="border-b border-[#e3e5ef] pb-4">
-            <label className="flex items-center gap-3">
-              <ApprovalCheckbox id={draft.id} label={t("メール下書き", "Email draft")} selected={selected.has(draft.id)} onToggle={toggle} />
-              <h2 className="flex items-center gap-2 text-xs font-bold text-[#4e3ad0]">
-                <Mail size={15} />
-                {t("メール下書き", "Email draft")}
-              </h2>
-            </label>
-            <dl className="mt-3 space-y-2 text-xs">
-              <div>
-                <dt className="font-bold">{t("宛先", "To")}</dt>
-                <dd className="mt-1 break-words rounded-md border border-[#e5e7ef] px-3 py-2">{draft.to.join(", ")}</dd>
-              </div>
-              <div>
-                <dt className="font-bold">{t("件名", "Subject")}</dt>
-                <dd className="mt-1 break-words rounded-md border border-[#e5e7ef] px-3 py-2">{draft.subject}</dd>
-              </div>
-              <div>
-                <dt className="font-bold">{t("本文プレビュー", "Message preview")}</dt>
-                <dd className="mt-1 max-h-32 overflow-y-auto whitespace-pre-wrap rounded-md border border-[#e5e7ef] px-3 py-2 leading-5 text-[#555e7b]">{draft.body}</dd>
-              </div>
-            </dl>
-          </section>
-        ))}
-
         <p className="text-[11px] leading-5 text-[#737b99]">
           {t(
-            "ここでは承認内容を保存します。外部カレンダーの変更やメール送信は自動では行いません。",
-            "This saves your approval. It does not automatically change an external calendar or send email.",
+            "ここでは承認内容を保存します。外部カレンダーの変更は自動では行いません。",
+            "This saves your approval. It does not automatically change an external calendar.",
           )}
         </p>
 

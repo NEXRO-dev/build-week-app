@@ -11,7 +11,6 @@ export type TaskType =
 export type Importance = "high" | "medium" | "low";
 export type Burden = "high" | "medium" | "low";
 export type Impact = "low" | "medium" | "high";
-export type EmailTone = "polite" | "casual" | "formal";
 export type ExtractedItemKind = "task" | "event" | "topic";
 export type TopicType = "reflection" | "concern" | "other";
 export type TemporalContext =
@@ -131,23 +130,12 @@ export type RestBlock = {
   reason: string;
 };
 
-export type EmailDraft = {
-  id: string;
-  to: string[];
-  subject: string;
-  body: string;
-  relatedTaskId: string | null;
-  tone: EmailTone;
-  caution: string;
-};
-
 export type TomorrowPlan = {
   condition: ConditionSignal;
   keep: PlanItem[];
   move: PlanItem[];
   reschedule: PlanItem[];
   restBlocks: RestBlock[];
-  emailDrafts: EmailDraft[];
   rationale: string[];
 };
 
@@ -184,7 +172,7 @@ export type ScheduleEntry = {
   transcript: string;
   audioMeta: AudioMeta;
   tasks: ExtractedTask[];
-  source: "cloudflare" | "demo";
+  source: "cloudflare" | "demo" | "manual";
 };
 
 export type HistoryTranscriptEntry = {

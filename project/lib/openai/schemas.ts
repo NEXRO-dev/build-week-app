@@ -120,23 +120,12 @@ export const RestBlockSchema = z.object({
   reason: z.string(),
 });
 
-export const EmailDraftSchema = z.object({
-  id: z.string(),
-  to: z.array(z.string()),
-  subject: z.string(),
-  body: z.string(),
-  relatedTaskId: z.string().nullable(),
-  tone: z.enum(["polite", "casual", "formal"]),
-  caution: z.string(),
-});
-
 export const TomorrowPlanSchema = z.object({
   condition: ConditionSignalSchema,
   keep: z.array(PlanItemSchema),
   move: z.array(PlanItemSchema),
   reschedule: z.array(PlanItemSchema),
   restBlocks: z.array(RestBlockSchema),
-  emailDrafts: z.array(EmailDraftSchema),
   rationale: z.array(z.string()),
 });
 
@@ -176,10 +165,4 @@ export const PlanRequestSchema = z.object({
   tasks: z.array(ExtractedTaskSchema).max(30),
   condition: ConditionSignalSchema,
   calendarEvents: z.array(CalendarEventSchema).max(50),
-});
-
-export const DraftEmailRequestSchema = z.object({
-  locale: z.enum(["jp-ja", "us-en"]).default("jp-ja"),
-  rescheduleItem: PlanItemSchema,
-  tone: z.enum(["polite", "casual", "formal"]),
 });

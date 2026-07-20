@@ -279,19 +279,6 @@ export function createDemoPlan(
               reason: isEnglish ? "Leave this time open for recovery based on signs of insufficient sleep." : "睡眠不足の表現を踏まえ、予定を入れない回復時間にします。",
             },
           ],
-    emailDrafts: rescheduleTask
-      ? [
-          {
-            id: `email-${rescheduleTask.id}`,
-            to: rescheduleTask.people.length ? rescheduleTask.people : [isEnglish ? "Attendees" : "関係者"],
-            subject: isEnglish ? `Request to reschedule ${rescheduleTask.title}` : `${rescheduleTask.title}の日程調整のお願い`,
-            body: isEnglish ? `Hello,\n\nWould it be possible to reschedule tomorrow's ${rescheduleTask.title}? If possible, I would appreciate moving it to after 4:00 PM on the next business day. Please let me know what works for you.\n\nThank you.` : `お疲れさまです。\n\n明日予定している「${rescheduleTask.title}」について、進行上の都合により日程を調整させていただけないでしょうか。\n\n可能でしたら、翌営業日の16時以降で再調整できればと考えています。ご都合のよい時間をお知らせいただけますと幸いです。\n\nどうぞよろしくお願いいたします。`,
-            relatedTaskId: rescheduleTask.id,
-            tone: "polite",
-            caution: isEnglish ? "Review the recipients and proposed time before using this draft." : "宛先と候補日時を確認してから下書きを利用してください。",
-          },
-        ]
-      : [],
     rationale: [
       isEnglish ? "Protected the most important fixed commitment first." : "動かしにくい重要予定を先に固定しました。",
       condition.level === "high"
@@ -336,7 +323,6 @@ export function getSampleHistory(): CheckIn[] {
         move: [],
         reschedule: [],
         restBlocks: [],
-        emailDrafts: [],
         rationale: [],
       },
       approvalStatus: "partially_approved",
@@ -368,7 +354,6 @@ export function getSampleHistory(): CheckIn[] {
         move: [],
         reschedule: [],
         restBlocks: [],
-        emailDrafts: [],
         rationale: [],
       },
       approvalStatus: "approved",
