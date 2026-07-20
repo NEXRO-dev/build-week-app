@@ -8,6 +8,7 @@ import type {
   TemporalContext,
   TomorrowPlan,
 } from "@/types/echly";
+import { normalizeClockTime } from "@/lib/tasks/time";
 
 export const SAMPLE_TRANSCRIPT =
   "明日は10時にA社の予算会議。午後は資料の仕上げ、17時からCさんとブレスト。でも、今日はほとんど寝てなくて、正直もう頭が回らない。";
@@ -103,9 +104,7 @@ function createGenericTasks(transcript: string): ExtractedTask[] {
           : temporalContext === "today"
             ? "今日"
             : null,
-      startTime: sentence.match(/(\d{1,2})時/)?.[1]
-        ? `${sentence.match(/(\d{1,2})時/)?.[1]?.padStart(2, "0")}:00`
-        : null,
+      startTime: normalizeClockTime(sentence),
       endTime: null,
       deadline: null,
       people: [],

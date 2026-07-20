@@ -56,6 +56,13 @@ export function getCloudflareTextModel() {
 export function getCloudflareTranscriptionModel() {
   return (
     process.env.CLOUDFLARE_TRANSCRIPTION_MODEL?.trim() ||
+    "@cf/deepgram/nova-3"
+  );
+}
+
+export function getCloudflareTranscriptionFallbackModel() {
+  return (
+    process.env.CLOUDFLARE_TRANSCRIPTION_FALLBACK_MODEL?.trim() ||
     "@cf/openai/whisper-large-v3-turbo"
   );
 }
@@ -104,6 +111,61 @@ export async function runCloudflareModel(
   }
 
   return payload.result;
+}
+
+export async function runCloudflareAudioModel(
+  model: string,
+  audio: ArrayBuffer,
+  contentType: string,
+  parameters: Record<string, string | number | boolean> = {},
+) {
+  const { accountId, apiToken } = getCloudflareConfig();
+  const query = new URLSearchParams();
+
+  for (const [key, value] of Object.entries(parameters)) {
+    query.set(key, String(value));
+  }
+
+  const queryString = query.size ? `?${query.toString()}` : "";
+  const response = await fetch(
+    `${CLOUDFLARE_API_BASE}/${encodeURIComponent(accountId)}/ai/run/${modelPath(model)}${queryString}`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiToken}`,
+        "Content-Type": contentType || "application/octet-stream",
+      },
+      body: audio,
+      cache: "no-store",
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    },
+  );
+
+  let payload: (CloudflareEnvelope & Record<string, unknown>) | null = null;
+  try {
+    payload = (await response.json()) as CloudflareEnvelope &
+      Record<string, unknown>;
+  } catch {
+    // The status code below is still useful when Cloudflare returns a non-JSON error.
+  }
+
+  if (!response.ok || payload?.success === false) {
+    const firstError = payload?.errors?.[0] ?? payload?.messages?.[0];
+    throw new CloudflareWorkersAiError(
+      firstError?.message || `Cloudflare Workers AI request failed (${response.status}).`,
+      response.status,
+      firstError?.code ?? null,
+    );
+  }
+
+  if (!payload) {
+    throw new CloudflareWorkersAiError(
+      "Cloudflare Workers AI returned an empty audio response.",
+      response.status,
+    );
+  }
+
+  return payload.result ?? payload;
 }
 
 function contentPartValue(content: unknown) {

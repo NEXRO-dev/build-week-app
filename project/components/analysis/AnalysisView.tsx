@@ -58,6 +58,12 @@ function analysisGroupFor(task: ExtractedTask): AnalysisGroup {
 const waveformBarCount = 56;
 const waveformMinHeight = 6;
 const waveformMaxHeight = 52;
+type VoiceFeature = "speechRate" | "pauseRatio";
+
+function voiceFeatureDescription(features: VoiceFeature[]) {
+  if (features.length === 2) return "話速と間";
+  return features[0] === "pauseRatio" ? "間" : "話速";
+}
 
 function scoreFor(level: ConditionLevel) { return level === "high" ? 72 : level === "caution" ? 58 : 34; }
 function formatDuration(seconds: number) {
@@ -65,8 +71,193 @@ function formatDuration(seconds: number) {
   return `${Math.floor(total / 60).toString().padStart(2, "0")}:${(total % 60).toString().padStart(2, "0")}`;
 }
 
-export function AnalysisView({ transcript, audioMeta, tasks, condition, onBack, onCreatePlan, processingStage, error }: Props) {
-  const score = scoreFor(condition.level);
+async function createWaveformHeights(audioBlob: Blob) {
+  const AudioContextClass =
+    window.AudioContext ||
+    (window as typeof window & { webkitAudioContext?: typeof AudioContext })
+      .webkitAudioContext;
+  if (!AudioContextClass) return null;
+
+  const context = new AudioContextClass();
+  try {
+    const buffer = await context.decodeAudioData(await audioBlob.arrayBuffer());
+    const samples = buffer.getChannelData(0);
+    const samplesPerBar = Math.max(1, Math.floor(samples.length / waveformBarCount));
+    const values = Array.from({ length: waveformBarCount }, (_, barIndex) => {
+      const start = barIndex * samplesPerBar;
+      const end = Math.min(samples.length, start + samplesPerBar);
+      let sumSquares = 0;
+      for (let index = start; index < end; index += 1) {
+        sumSquares += samples[index] ** 2;
+      }
+      return Math.sqrt(sumSquares / Math.max(1, end - start));
+    });
+    const peak = Math.max(...values, 0.001);
+    return values.map((value) =>
+      Math.round(
+        waveformMinHeight +
+          (value / peak) * (waveformMaxHeight - waveformMinHeight),
+      ),
+    );
+  } finally {
+    await context.close();
+  }
+}
+
+function shareTextFor(
+  condition: ConditionSignal,
+  groupedTasks: Record<AnalysisGroup, ExtractedTask[]>,
+) {
+  const score = condition.score ?? scoreFor(condition.level);
+  const sections = analysisGroups.flatMap((group) => {
+    const items = groupedTasks[group.id];
+    if (!items.length) return [];
+    return [`${group.label}: ${items.map((item) => item.title).join("、")}`];
+  });
+  return [
+    `Echly 負荷シグナル: ${score}/100（${condition.label}）`,
+    condition.summary,
+    ...sections,
+  ].join("\n");
+}
+
+export function AnalysisView({
+  transcript,
+  audioBlob,
+  audioMeta,
+  tasks,
+  condition,
+  onBack,
+  onCreatePlan,
+  processingStage,
+  error,
+}: Props) {
+  const score = condition.score ?? scoreFor(condition.level);
+  const voiceBaselineTarget =
+    condition.components?.voiceBaselineTarget ?? 5;
+  const voiceMinimumDurationSec =
+    condition.components?.voiceMinimumDurationSec ?? 10;
+  const fallbackVoiceFeatures: VoiceFeature[] =
+    audioMeta.durationSec >= voiceMinimumDurationSec
+      ? [
+          ...(Number.isFinite(audioMeta.speechRate)
+            ? (["speechRate"] as VoiceFeature[])
+            : []),
+          ...(Number.isFinite(audioMeta.silenceRatio)
+            ? (["pauseRatio"] as VoiceFeature[])
+            : []),
+        ]
+      : [];
+  const voiceFeaturesAvailable =
+    condition.components?.voiceFeaturesAvailable ?? fallbackVoiceFeatures;
+  const voiceFeaturesUsed =
+    condition.components?.voiceFeaturesUsed ?? [];
+  const voiceCurrentEligible =
+    condition.components?.voiceCurrentEligible ??
+    voiceFeaturesAvailable.length > 0;
+  const voiceEligibilityReason =
+    condition.components?.voiceEligibilityReason ??
+    (voiceCurrentEligible
+      ? "eligible"
+      : audioMeta.durationSec < voiceMinimumDurationSec
+        ? "too_short"
+        : "no_features");
+  const voiceSamplesCollected =
+    condition.components?.voiceSamplesCollected ??
+    Math.min(
+      voiceBaselineTarget,
+      (condition.components?.voiceBaselineCount ?? 0) +
+        (voiceCurrentEligible ? 1 : 0),
+    );
+  const voiceBaselineProgress =
+    (voiceSamplesCollected / voiceBaselineTarget) * 100;
+  const hasVoiceDeviation =
+    typeof condition.components?.voiceDeviation === "number";
+  const voiceUsesSingleFeature =
+    hasVoiceDeviation &&
+    (voiceFeaturesUsed.length === 1 ||
+      condition.components?.voiceWeight === 0.05);
+  const voiceStatusLabel = hasVoiceDeviation
+    ? condition.components?.voiceDeviation +
+      "/100" +
+      (voiceUsesSingleFeature ? "（1特徴）" : "")
+    : !voiceCurrentEligible
+      ? voiceEligibilityReason === "too_short"
+        ? "参考記録（短時間）"
+        : "特徴を取得できず"
+      : voiceSamplesCollected >= voiceBaselineTarget
+        ? "基準作成完了"
+        : voiceSamplesCollected + "/" + voiceBaselineTarget + "件";
+  const voiceStatusHint = hasVoiceDeviation
+    ? voiceUsesSingleFeature
+      ? "過去" +
+        condition.components?.voiceBaselineCount +
+        "件と比べ、取得できた" +
+        voiceFeatureDescription(
+          voiceFeaturesUsed.length ? voiceFeaturesUsed : voiceFeaturesAvailable,
+        ) +
+        "のみで暫定算出しています。音声の重みは半分です。"
+      : "過去" +
+        condition.components?.voiceBaselineCount +
+        "件と比べた話速・間の変化です。"
+    : !voiceCurrentEligible
+      ? voiceEligibilityReason === "too_short"
+        ? voiceMinimumDurationSec +
+          "秒未満のため保存のみ行い、ベースラインには加えていません。"
+        : "録音は保存しましたが、話速と間を取得できなかったため参考記録です。"
+      : voiceSamplesCollected >= voiceBaselineTarget
+        ? "次回の録音から、取得できた特徴で個人内変化を算出します。"
+        : "あと" +
+          (voiceBaselineTarget - voiceSamplesCollected) +
+          "件で個人内比較を開始します。";
+  const calculationMetrics = condition.components
+    ? [
+        {
+          label: "主観的ワークロード",
+          valueLabel: condition.components.rawTlx + "/100",
+          progress: condition.components.rawTlx,
+          hint: null,
+          pending: false,
+        },
+        {
+          label: "眠気",
+          valueLabel: condition.components.sleepiness + "/100",
+          progress: condition.components.sleepiness,
+          hint: null,
+          pending: false,
+        },
+        {
+          label: "音声の個人内変化",
+          valueLabel: voiceStatusLabel,
+          progress:
+            typeof condition.components.voiceDeviation === "number"
+              ? condition.components.voiceDeviation
+              : voiceBaselineProgress,
+          hint: voiceStatusHint,
+          pending: condition.components.voiceDeviation === null,
+        },
+      ]
+    : [];
+  const gaugeColor =
+    condition.level === "high"
+      ? "#ef3f71"
+      : condition.level === "caution"
+        ? "#e89a20"
+        : "#28a477";
+  const audioUrl = useMemo(
+    () => (audioBlob ? URL.createObjectURL(audioBlob) : null),
+    [audioBlob],
+  );
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const audioProgressFrameRef = useRef<number | null>(null);
+  const [waveformHeights, setWaveformHeights] = useState<number[] | null>(null);
+  const [audioCurrentTime, setAudioCurrentTime] = useState(0);
+  const [audioDuration, setAudioDuration] = useState(audioMeta.durationSec);
+  const [shareFeedback, setShareFeedback] = useState<string | null>(null);
+  const audioProgress =
+    audioDuration > 0
+      ? Math.min(1, Math.max(0, audioCurrentTime / audioDuration))
+      : 0;
   const groupedTasks: Record<AnalysisGroup, ExtractedTask[]> = {
     reflection: [],
     tomorrow: [],
@@ -266,29 +457,30 @@ export function AnalysisView({ transcript, audioMeta, tasks, condition, onBack, 
           <p className="mt-3 text-xs font-semibold leading-5 text-[#343c5b]">
             {condition.summary}
           </p>
-          {condition.components ? (
+          {calculationMetrics.length ? (
             <div className="mt-4 space-y-3">
-              {[
-                ["主観的ワークロード", condition.components.rawTlx],
-                ["眠気", condition.components.sleepiness],
-                [
-                  "音声の個人内変化",
-                  condition.components.voiceDeviation,
-                ],
-              ].map(([label, value]) => (
-                <div key={String(label)}>
+              {calculationMetrics.map((metric) => (
+                <div key={metric.label}>
                   <div className="flex justify-between gap-3 text-[10px]">
-                    <span className="text-[#626b89]">{label}</span>
+                    <span className="text-[#626b89]">{metric.label}</span>
                     <span className="font-bold tabular-nums text-[#303857]">
-                      {typeof value === "number" ? `${value}/100` : "ベースライン作成中"}
+                      {metric.valueLabel}
                     </span>
                   </div>
                   <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-[#eceef4]">
                     <span
-                      className="block h-full rounded-full bg-[#5b42ff]"
-                      style={{ width: `${typeof value === "number" ? value : 0}%` }}
+                      className={
+                        "block h-full rounded-full transition-[width] duration-500 " +
+                        (metric.pending ? "bg-[#168f78]" : "bg-[#5b42ff]")
+                      }
+                      style={{ width: metric.progress + "%" }}
                     />
                   </div>
+                  {metric.hint ? (
+                    <p className="mt-1.5 text-[9px] leading-4 text-[#737b99]">
+                      {metric.hint}
+                    </p>
+                  ) : null}
                 </div>
               ))}
             </div>

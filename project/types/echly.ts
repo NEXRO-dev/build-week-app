@@ -34,6 +34,22 @@ export type AudioMeta = {
   speechRate: number | null;
 };
 
+export type TranscriptAlternative = {
+  provider: "nova-3" | "whisper";
+  transcript: string;
+  confidence: number | null;
+};
+
+export type TranscriptReview = {
+  mode: "reflection" | "planning";
+  transcript: string;
+  provider: "nova-3" | "whisper";
+  confidence: number | null;
+  agreement: number | null;
+  quality: "high" | "review";
+  alternatives: TranscriptAlternative[];
+};
+
 export type WorkloadSelfReport = {
   mentalDemand: number;
   physicalDemand: number;
@@ -50,13 +66,21 @@ export type LoadSignalComponents = {
   sleepiness: number;
   voiceDeviation: number | null;
   voiceBaselineCount: number;
+  voiceBaselineTarget?: number;
+  voiceSamplesCollected?: number;
+  voiceCurrentEligible?: boolean;
+  voiceFeaturesAvailable?: Array<"speechRate" | "pauseRatio">;
+  voiceFeaturesUsed?: Array<"speechRate" | "pauseRatio">;
+  voiceFeatureCoverage?: number;
+  voiceMinimumDurationSec?: number;
+  voiceEligibilityReason?: "eligible" | "too_short" | "no_features";
   workloadWeight: number;
   sleepinessWeight: number;
   voiceWeight: number;
 };
 
 export type LoadSignalConfidence = "standard" | "limited";
-export type LoadSignalMethod = "echly-load-v1";
+export type LoadSignalMethod = "echly-load-v1" | "echly-load-v2";
 
 export type ConditionSignal = {
   level: ConditionLevel;
@@ -95,6 +119,7 @@ export type PlanItem = {
   title: string;
   originalTime: string | null;
   proposedTime: string | null;
+  endTime?: string | null;
   reason: string;
   impact: Impact;
 };
@@ -140,6 +165,16 @@ export type AnalysisResult = {
   condition: ConditionSignal;
 };
 
+export type ScheduleEntry = {
+  id: string;
+  createdAt: string;
+  targetDate: string;
+  transcript: string;
+  audioMeta: AudioMeta;
+  tasks: ExtractedTask[];
+  source: "cloudflare" | "demo";
+};
+
 export type ApprovalStatus =
   | "draft"
   | "approved"
@@ -149,6 +184,8 @@ export type ApprovalStatus =
 export type CheckIn = {
   id: string;
   createdAt: string;
+  localDate?: string;
+  timeZone?: string;
   transcript: string;
   audioMeta: AudioMeta;
   condition: ConditionSignal;

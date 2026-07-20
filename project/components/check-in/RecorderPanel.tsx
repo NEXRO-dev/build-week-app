@@ -50,6 +50,24 @@ function preferredMimeType() {
   return ["audio/webm;codecs=opus", "audio/mp4", "audio/webm", "audio/ogg;codecs=opus"].find((type) => MediaRecorder.isTypeSupported(type));
 }
 
+const audioConstraints: MediaStreamConstraints = {
+  audio: {
+    channelCount: 1,
+    sampleRate: { ideal: 48_000 },
+    sampleSize: { ideal: 16 },
+    echoCancellation: true,
+    noiseSuppression: true,
+    autoGainControl: true,
+  },
+};
+
+function audioQualityHint(meta: AudioMeta | null) {
+  if (!meta) return null;
+  if (meta.durationSec < 3) return "録音が短めです。5秒以上話すと認識しやすくなります。";
+  if (meta.averageVolume !== null && meta.averageVolume < 0.018) return "声が小さめです。マイクに少し近づくと認識しやすくなります。";
+  if (meta.silenceRatio !== null && meta.silenceRatio > 0.65) return "無音が多めです。話し始めてから録音すると安定します。";
+  return null;
+}
 export function RecorderPanel({
   audioBlob,
   onAudioReady,
@@ -72,6 +90,8 @@ export function RecorderPanel({
   const chunksRef = useRef<Blob[]>([]);
   const startedAtRef = useRef<number | null>(null);
   const audioUrl = useMemo(() => audioBlob ? URL.createObjectURL(audioBlob) : null, [audioBlob]);
+  const [lastAudioMeta, setLastAudioMeta] = useState<AudioMeta | null>(null);
+  const qualityHint = audioQualityHint(lastAudioMeta);
   const colors = toneStyles[tone];
 
   useEffect(() => () => { if (audioUrl) URL.revokeObjectURL(audioUrl); }, [audioUrl]);
@@ -88,16 +108,21 @@ export function RecorderPanel({
       return;
     }
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const stream = await navigator.mediaDevices.getUserMedia(audioConstraints);
       const mimeType = preferredMimeType();
-      const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
+      const recorder = new MediaRecorder(stream, {
+        ...(mimeType ? { mimeType } : {}),
+        audioBitsPerSecond: 128_000,
+      });
       streamRef.current = stream; recorderRef.current = recorder; chunksRef.current = [];
       startedAtRef.current = Date.now(); setElapsed(0); onDiscard();
       recorder.ondataavailable = (event) => { if (event.data.size) chunksRef.current.push(event.data); };
       recorder.onstop = async () => {
         const durationSec = Math.max(1, Math.round((Date.now() - (startedAtRef.current ?? Date.now())) / 1000));
         const blob = new Blob(chunksRef.current, { type: recorder.mimeType || "audio/webm" });
-        onAudioReady(blob, await analyzeAudioBlob(blob, durationSec));
+        const meta = await analyzeAudioBlob(blob, durationSec);
+        setLastAudioMeta(meta);
+        onAudioReady(blob, meta);
         stream.getTracks().forEach((track) => track.stop()); streamRef.current = null; startedAtRef.current = null;
       };
       recorder.start(500); setIsRecording(true);
@@ -134,6 +159,7 @@ export function RecorderPanel({
           <Button size="sm" variant="primary" onPress={onPrimaryAction} isDisabled={isProcessing || isPrimaryDisabled} className={`min-w-20 text-white ${colors.primary}`}>{primaryActionLabel}</Button>
         </div>
       ) : null}
+      {audioBlob && qualityHint ? <p className="mt-2 max-w-full text-center text-xs font-medium text-[#9a5b10]">{qualityHint}</p> : null}
       {audioUrl ? <audio controls src={audioUrl} className="mt-3 h-9 w-full max-w-full" /> : null}
     </div>
   );

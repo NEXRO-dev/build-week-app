@@ -23,6 +23,20 @@ const LoadSignalComponentsSchema = z.object({
   sleepiness: z.number().min(0).max(100),
   voiceDeviation: z.number().min(0).max(100).nullable(),
   voiceBaselineCount: z.number().int().min(0),
+  voiceBaselineTarget: z.number().int().min(1).optional(),
+  voiceSamplesCollected: z.number().int().min(0).optional(),
+  voiceCurrentEligible: z.boolean().optional(),
+  voiceFeaturesAvailable: z
+    .array(z.enum(["speechRate", "pauseRatio"]))
+    .optional(),
+  voiceFeaturesUsed: z
+    .array(z.enum(["speechRate", "pauseRatio"]))
+    .optional(),
+  voiceFeatureCoverage: z.number().min(0).max(1).optional(),
+  voiceMinimumDurationSec: z.number().min(1).optional(),
+  voiceEligibilityReason: z
+    .enum(["eligible", "too_short", "no_features"])
+    .optional(),
   workloadWeight: z.number().min(0).max(1),
   sleepinessWeight: z.number().min(0).max(1),
   voiceWeight: z.number().min(0).max(1),
@@ -38,7 +52,7 @@ export const ConditionSignalSchema = z.object({
   disclaimer: z.string(),
   confidence: z.enum(["standard", "limited"]),
   components: LoadSignalComponentsSchema,
-  methodVersion: z.literal("echly-load-v1"),
+  methodVersion: z.enum(["echly-load-v1", "echly-load-v2"]),
 });
 
 export const ExtractedTaskSchema = z.object({
@@ -94,6 +108,7 @@ export const PlanItemSchema = z.object({
   title: z.string(),
   originalTime: z.string().nullable(),
   proposedTime: z.string().nullable(),
+  endTime: z.string().nullable().optional(),
   reason: z.string(),
   impact: z.enum(["low", "medium", "high"]),
 });
@@ -137,6 +152,12 @@ export const CalendarEventSchema = z.object({
   endTime: z.string(),
   movable: z.boolean(),
   importance: z.enum(["high", "medium", "low"]),
+});
+
+export const TaskExtractionRequestSchema = z.object({
+  transcript: z.string().trim().min(1).max(12000),
+  referenceDate: z.string().datetime(),
+  timeZone: z.string().min(1).max(100),
 });
 
 export const AnalyzeRequestSchema = z.object({
