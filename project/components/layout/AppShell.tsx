@@ -26,7 +26,7 @@ export function AppShell({ children, view, onViewChange }: AppShellProps) {
   const navItems = [
     { id: "checkin" as const, label: t("ホーム", "Home"), icon: Home },
     { id: "analysis" as const, label: t("解析", "Analysis"), icon: ChartNoAxesColumnIncreasing },
-    { id: "plan" as const, label: t("プラン", "Plan"), icon: CalendarDays },
+    { id: "plan" as const, label: t("予定", "Plan"), icon: CalendarDays },
     { id: "history" as const, label: t("履歴", "History"), icon: History },
     { id: "settings" as const, label: t("設定", "Settings"), icon: Settings },
   ];

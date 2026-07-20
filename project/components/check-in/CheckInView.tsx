@@ -217,6 +217,17 @@ export function CheckInView(props: CheckInViewProps) {
   }, [reflectionStatus]);
 
   useEffect(() => {
+    if (reflectionStatus !== "completed") return;
+    const timeoutId = window.setTimeout(() => {
+      setAssessmentOpen(false);
+      setAssessmentIndex(0);
+      setAssessmentCloseConfirmOpen(false);
+      setMode("planning");
+    }, 0);
+    return () => window.clearTimeout(timeoutId);
+  }, [reflectionStatus]);
+
+  useEffect(() => {
     if (retryRecordingMode === null) return;
     const timeoutId = window.setTimeout(() => {
       setAssessmentOpen(false);

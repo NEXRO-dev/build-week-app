@@ -375,6 +375,7 @@ export function EchlyApp({
   });
   const checkInWriteQueueRef = useRef<Promise<void>>(Promise.resolve());
   const planWriteQueueRef = useRef<Promise<void>>(Promise.resolve());
+  const activeLocalDateRef = useRef<string | null>(null);
 
   useEffect(() => {
     const timeZone = debugTimeZone ?? resolveBrowserTimeZone();
@@ -383,6 +384,31 @@ export function EchlyApp({
     const intervalId = window.setInterval(updateClock, 30_000);
     return () => window.clearInterval(intervalId);
   }, [debugTimeZone]);
+
+  useEffect(() => {
+    const currentLocalDate = zonedNow?.dateKey;
+    if (!currentLocalDate) return;
+
+    const previousLocalDate = activeLocalDateRef.current;
+    activeLocalDateRef.current = currentLocalDate;
+    if (!previousLocalDate || previousLocalDate === currentLocalDate) return;
+
+    const resetId = window.setTimeout(() => {
+      setAnalysis(null);
+      setTranscript("");
+      setAudioMeta({ ...EMPTY_AUDIO_META });
+      setSource("demo");
+      setTranscriptByMode({ reflection: "", planning: "" });
+      setAudioByMode(createEmptyAudioByMode());
+      setSelfReport({});
+      setTranscriptReview(null);
+      setPendingReflectionReport(null);
+      setRetryRecordingMode(null);
+      setError(null);
+      setProcessingStage(null);
+    }, 0);
+    return () => window.clearTimeout(resetId);
+  }, [zonedNow?.dateKey]);
 
   useEffect(() => {
     const timeoutId = window.setTimeout(() => {
@@ -893,6 +919,15 @@ export function EchlyApp({
     setTranscriptReview(null);
     setRetryRecordingMode(null);
     setError(null);
+  }
+
+  function clearHomeDraftInputs() {
+    setTranscriptByMode({ reflection: "", planning: "" });
+    setAudioByMode(createEmptyAudioByMode());
+    setSelfReport({});
+    setTranscriptReview(null);
+    setPendingReflectionReport(null);
+    setRetryRecordingMode(null);
   }
 
   async function transcribeRecording(
@@ -1589,6 +1624,7 @@ export function EchlyApp({
       }>(response, isEnglish);
       const nextPlan = applySpokenTimesToPlan(data.plan, planTasks);
       await persistPlan(nextPlan, data.generationSource);
+      clearHomeDraftInputs();
       handleWorkspaceViewChange("plan");
     } catch (caught) {
       setError(
@@ -1646,6 +1682,59 @@ export function EchlyApp({
             ? "Approval could not be saved."
             : "承認内容を保存できませんでした。",
       );
+    }
+  }
+
+  async function handleConfirmPlan() {
+    if (!plan || !tomorrowDate) return;
+    const confirmedActionIds = [
+      ...plan.move,
+      ...plan.reschedule,
+      ...plan.restBlocks,
+    ].map((item) => item.id);
+    const now = new Date().toISOString();
+    const planRecord: PlanRecord = {
+      targetDate: tomorrowDate,
+      createdAt: activePlanRecord?.createdAt ?? now,
+      updatedAt: now,
+      plan,
+      approvalStatus: "approved",
+      approvedActionIds: confirmedActionIds,
+      generationSource:
+        planGenerationSource ?? activePlanRecord?.generationSource ?? "fallback",
+    };
+
+    setError(null);
+    setProcessingStage(isEnglish ? "Confirming schedule..." : "予定を確定中...");
+    try {
+      await synchronizeScheduleEntriesWithPlan(plan);
+      await queuePlanRecord(planRecord);
+      replacePlanRecord(planRecord);
+      setAppliedActionIds(confirmedActionIds);
+
+      const currentRecord = localDate
+        ? history.find((item) => item.localDate === localDate)
+        : undefined;
+      if (currentRecord) {
+        const updated: CheckIn = {
+          ...currentRecord,
+          plan,
+          approvalStatus: "approved",
+          approvedActionIds: confirmedActionIds,
+        };
+        await queueCheckInRecord(updated);
+        replaceCheckInRecord(updated);
+      }
+    } catch (caught) {
+      setError(
+        caught instanceof Error
+          ? caught.message
+          : isEnglish
+            ? "The schedule could not be confirmed."
+            : "予定を確定できませんでした。",
+      );
+    } finally {
+      setProcessingStage(null);
     }
   }
 
@@ -1756,6 +1845,7 @@ export function EchlyApp({
           source={activeSource}
           onBack={() => handleWorkspaceViewChange("checkin")}
           onCreatePlan={handleCreatePlan}
+          planCreated={Boolean(activePlanRecord || (plan && planTargetDate === tomorrowDate))}
           processingStage={processingStage}
           error={error}
         />
@@ -1777,7 +1867,7 @@ export function EchlyApp({
           onAddActivity={handleAddPlanActivity}
           onBack={() => handleWorkspaceViewChange("checkin")}
           onRegenerate={handleCreatePlan}
-          onApproval={() => handleWorkspaceViewChange("approval")}
+          onConfirm={() => void handleConfirmPlan()}
         />
       ) : (
         <PlanEmptyView

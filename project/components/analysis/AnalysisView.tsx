@@ -1,7 +1,7 @@
 "use client";
 
 import { Button } from "@heroui/react";
-import { ArrowLeft, ArrowRight, CalendarDays, LoaderCircle, Upload } from "lucide-react";
+import { ArrowLeft, ArrowRight, CalendarDays, CheckCircle2, LoaderCircle, Upload } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import type { AudioMeta, ConditionLevel, ConditionSignal, ExtractedTask, TaskType } from "@/types/echly";
@@ -17,6 +17,7 @@ type Props = {
   source: "cloudflare" | "demo";
   onBack: () => void;
   onCreatePlan: () => void;
+  planCreated: boolean;
   processingStage: string | null;
   error: string | null;
 };
@@ -130,6 +131,7 @@ export function AnalysisView({
   condition,
   onBack,
   onCreatePlan,
+  planCreated,
   processingStage,
   error,
 }: Props) {
@@ -590,8 +592,14 @@ export function AnalysisView({
           </div>
         </section>
 
-        <Button variant="primary" size="lg" fullWidth isDisabled={Boolean(processingStage)} onPress={onCreatePlan} className="h-12 bg-[#5b42ff] text-white">
-          {processingStage ? <LoaderCircle size={18} className="animate-spin" /> : null}{processingStage ?? t("明日のプランを作る", "Create tomorrow's plan")}{!processingStage ? <ArrowRight size={18} /> : null}
+        <Button variant="primary" size="lg" fullWidth isDisabled={planCreated || Boolean(processingStage)} onPress={onCreatePlan} className="h-12 bg-[#5b42ff] text-white">
+          {processingStage
+            ? <LoaderCircle size={18} className="animate-spin" />
+            : planCreated
+              ? <CheckCircle2 size={18} />
+              : null}
+          {processingStage ?? (planCreated ? t("明日の予定は作成済み", "Tomorrow's schedule is ready") : t("明日のプランを作る", "Create tomorrow's plan"))}
+          {!processingStage && !planCreated ? <ArrowRight size={18} /> : null}
         </Button>
       </div>
     </div>

@@ -3,7 +3,6 @@
 import { Button } from "@heroui/react";
 import {
   ArrowLeft,
-  ArrowRight,
   CalendarDays,
   CheckCircle2,
   GripVertical,
@@ -41,7 +40,7 @@ type Props = {
   onAddActivity: (activity: PlanActivityInput) => Promise<void>;
   onBack: () => void;
   onRegenerate: () => void;
-  onApproval: () => void;
+  onConfirm: () => void;
 };
 
 type TimelineItem = {
@@ -51,6 +50,14 @@ type TimelineItem = {
   title: string;
   kind: EditablePlanItemKind;
   detail: string;
+};
+
+type PositionedTimelineItem = {
+  item: TimelineItem;
+  start: number;
+  end: number;
+  lane: number;
+  laneCount: number;
 };
 
 type DragSession = {
@@ -66,6 +73,10 @@ const tone = {
   rest: "border-[#a894f5] bg-[#f6f3ff] text-[#5c43cb]",
   reschedule: "border-[#ef7898] bg-[#fff4f7] text-[#c9335d] border-dashed",
 };
+
+const TIMELINE_SLOT_MINUTES = 30;
+const TIMELINE_SLOT_HEIGHT = 64;
+const TIMELINE_CARD_GAP = 8;
 
 function timeValue(time: string | null | undefined) {
   const normalized = normalizeClockTime(time);
@@ -135,7 +146,7 @@ function rescheduledItems(plan: TomorrowPlan, isEnglish: boolean): TimelineItem[
 
 function timeSlots(items: TimelineItem[]) {
   const itemTimes = items
-    .map((item) => timeValue(item.time))
+    .flatMap((item) => [timeValue(item.time), timeValue(item.end)])
     .filter((value): value is number => value !== null);
   const first = Math.max(
     0,
@@ -149,6 +160,49 @@ function timeSlots(items: TimelineItem[]) {
     { length: Math.floor((last - first) / 30) + 1 },
     (_, index) => clock(first + index * 30),
   );
+}
+
+function positionedTimelineItems(items: TimelineItem[]) {
+  const timedItems = items
+    .map((item) => {
+      const start = timeValue(item.time);
+      const requestedEnd = timeValue(item.end);
+      if (start === null) return null;
+      return {
+        item,
+        start,
+        end: requestedEnd !== null && requestedEnd > start
+          ? requestedEnd
+          : start + TIMELINE_SLOT_MINUTES,
+      };
+    })
+    .filter((entry): entry is { item: TimelineItem; start: number; end: number } => entry !== null)
+    .sort((left, right) => left.start - right.start || left.end - right.end);
+
+  const positioned: PositionedTimelineItem[] = [];
+  let group: Array<{ item: TimelineItem; start: number; end: number; lane: number }> = [];
+  let groupEnd = -1;
+  let laneEnds: number[] = [];
+
+  function finishGroup() {
+    const laneCount = Math.max(1, laneEnds.length);
+    for (const entry of group) positioned.push({ ...entry, laneCount });
+    group = [];
+    groupEnd = -1;
+    laneEnds = [];
+  }
+
+  for (const entry of timedItems) {
+    if (group.length && entry.start >= groupEnd) finishGroup();
+    const availableLane = laneEnds.findIndex((end) => end <= entry.start);
+    const lane = availableLane === -1 ? laneEnds.length : availableLane;
+    laneEnds[lane] = entry.end;
+    groupEnd = Math.max(groupEnd, entry.end);
+    group.push({ ...entry, lane });
+  }
+  if (group.length) finishGroup();
+
+  return positioned;
 }
 
 function formatTargetDate(targetDate: string | null, isEnglish: boolean) {
@@ -171,7 +225,7 @@ export function PlanView({
   onAddActivity,
   onBack,
   onRegenerate,
-  onApproval,
+  onConfirm,
 }: Props) {
   const { isEnglish, t } = useI18n();
   const items = useMemo(() => timeline(plan, isEnglish), [isEnglish, plan]);
@@ -180,25 +234,14 @@ export function PlanView({
     [isEnglish, plan],
   );
   const slots = useMemo(() => timeSlots(items), [items]);
+  const positionedItems = useMemo(() => positionedTimelineItems(items), [items]);
   const dragRef = useRef<DragSession | null>(null);
   const scheduleRef = useRef<HTMLDivElement | null>(null);
   const [draggingItem, setDraggingItem] = useState<TimelineItem | null>(null);
   const [dragTarget, setDragTarget] = useState<string | null>(null);
   const [pointerPosition, setPointerPosition] = useState<{ x: number; y: number } | null>(null);
 
-  const scheduledBySlot = new Map<string, TimelineItem[]>();
   const unscheduled = [...items.filter((item) => !slotFor(item.time)), ...deferred];
-  const actionCount =
-    plan.move.length + plan.reschedule.length + plan.restBlocks.length;
-
-  for (const item of items) {
-    const slot = slotFor(item.time);
-    if (!slot) continue;
-    const current = scheduledBySlot.get(slot) ?? [];
-    current.push(item);
-    scheduledBySlot.set(slot, current);
-  }
-
   function changeTime(item: TimelineItem, time: string) {
     onPlanChange(movePlanItemToTime(plan, item.id, item.kind, time));
   }
@@ -265,13 +308,13 @@ export function PlanView({
     setPointerPosition({ x: event.clientX, y: event.clientY });
   }
 
-  function renderCard(item: TimelineItem) {
+  function renderCard(item: TimelineItem, fillHeight = false) {
     const normalizedTime = normalizeClockTime(item.time) ?? "";
     const isDragging = draggingItem?.id === item.id;
     return (
       <article
         key={`${item.kind}-${item.id}`}
-        className={`min-w-0 rounded-md border-l-[3px] px-2 py-2 ${tone[item.kind]}${
+        className={`min-w-0 rounded-md border-l-[3px] px-2 py-2 ${fillHeight ? " h-full overflow-hidden" : ""} ${tone[item.kind]}${
           isDragging ? " opacity-35" : ""
         }`}
       >
@@ -343,30 +386,54 @@ export function PlanView({
         <section className="mt-4">
           <h2 className="mb-2 text-xs font-bold">{t("タイムライン", "Timeline")}</h2>
           <div ref={scheduleRef} className="max-h-[58vh] overflow-y-auto overscroll-contain border-y border-[#e5e7ef]">
-            {slots.map((slot) => {
-              const slotItems = scheduledBySlot.get(slot) ?? [];
-              return (
+            <div className="relative">
+              {slots.map((slot) => (
                 <div
                   key={slot}
                   data-plan-time={slot}
-                  className={`grid min-h-12 grid-cols-[48px_1fr] border-b border-[#eceef4] transition-colors last:border-b-0 ${
+                  className={`grid h-16 grid-cols-[48px_1fr] border-b border-[#eceef4] transition-colors last:border-b-0 ${
                     dragTarget === slot ? "bg-[#eeeaff]" : "bg-white"
                   }`}
                 >
                   <time className="border-r border-[#eceef4] px-1 pt-2 text-right text-[10px] font-medium tabular-nums text-[#737b96]">
                     {slot}
                   </time>
-                  <div className="min-w-0 space-y-1.5 p-1.5">{slotItems.map(renderCard)}</div>
+                  <div className="min-w-0" />
                 </div>
-              );
-            })}
+              ))}
+              <div className="pointer-events-none absolute inset-y-0 left-12 right-0">
+                {positionedItems.map(({ item, start, end, lane, laneCount }) => {
+                  const timelineStart = timeValue(slots[0]) ?? 0;
+                  const top = ((start - timelineStart) / TIMELINE_SLOT_MINUTES) * TIMELINE_SLOT_HEIGHT + TIMELINE_CARD_GAP / 2;
+                  const height = Math.max(
+                    TIMELINE_SLOT_HEIGHT - TIMELINE_CARD_GAP,
+                    ((end - start) / TIMELINE_SLOT_MINUTES) * TIMELINE_SLOT_HEIGHT - TIMELINE_CARD_GAP,
+                  );
+                  const laneWidth = 100 / laneCount;
+                  return (
+                    <div
+                      key={`${item.kind}-${item.id}`}
+                      className={`absolute ${draggingItem ? "pointer-events-none" : "pointer-events-auto"}`}
+                      style={{
+                        top,
+                        height,
+                        left: `calc(${lane * laneWidth}% + ${TIMELINE_CARD_GAP / 2}px)`,
+                        right: `calc(${(laneCount - lane - 1) * laneWidth}% + ${TIMELINE_CARD_GAP / 2}px)`,
+                      }}
+                    >
+                      {renderCard(item, true)}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
           </div>
         </section>
 
         {unscheduled.length ? (
           <section className="mt-5">
             <h2 className="mb-2 text-xs font-bold">{t("時間未定・延期候補", "Unscheduled and deferred")}</h2>
-            <div className="space-y-2">{unscheduled.map(renderCard)}</div>
+            <div className="space-y-2">{unscheduled.map((item) => renderCard(item))}</div>
           </section>
         ) : null}
 
@@ -405,14 +472,14 @@ export function PlanView({
             variant="primary"
             size="lg"
             fullWidth
-            isDisabled={!actionCount || Boolean(processingStage)}
-            onPress={onApproval}
+            isDisabled={approvalStatus === "approved" || Boolean(processingStage)}
+            onPress={onConfirm}
             className="h-12 min-w-0 bg-[#5b42ff] text-white"
           >
-            {actionCount
-              ? t(`${actionCount}件の調整候補を確認`, `Review ${actionCount} changes`)
-              : t("調整が必要な予定はありません", "No changes to review")}
-            {actionCount ? <ArrowRight size={18} /> : null}
+            <CheckCircle2 size={18} />
+            {approvalStatus === "approved"
+              ? t("この予定で確定済み", "Schedule confirmed")
+              : t("この予定で確定", "Confirm this schedule")}
           </Button>
         </div>
       </div>
