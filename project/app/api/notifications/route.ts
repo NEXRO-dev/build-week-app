@@ -1,14 +1,12 @@
 import { auth } from "@/lib/auth";
 import {
   deletePushSubscription,
-  getPushSubscription,
   savePushSubscription,
 } from "@/lib/notifications/store";
 import { isValidTimeZone } from "@/lib/notifications/time";
 import {
   getVapidPublicKey,
   isWebPushConfigured,
-  sendWebPush,
 } from "@/lib/notifications/webPush";
 
 export const runtime = "nodejs";
@@ -45,25 +43,10 @@ export async function POST(request: Request) {
     }
 
     const body = await request.json() as {
-      action?: unknown;
       subscription?: SubscriptionInput;
-      endpoint?: unknown;
       timeZone?: unknown;
       locale?: unknown;
     };
-
-    if (body.action === "test") {
-      const endpoint = parseEndpoint(body.endpoint);
-      if (!endpoint) return Response.json({ code: "INVALID_ENDPOINT" }, { status: 400 });
-      const stored = await getPushSubscription(user.id, endpoint);
-      if (!stored) return Response.json({ code: "SUBSCRIPTION_NOT_FOUND" }, { status: 404 });
-      await sendWebPush(stored.subscription, {
-        title: stored.locale === "us-en" ? "Echly notifications are on" : "Echlyの通知をオンにしました",
-        body: stored.locale === "us-en" ? "We'll remind you to reflect at 8:00 PM in your time zone." : "タイムゾーンの20:00に、振り返りをお知らせします。",
-        url: `/${stored.locale}`,
-      });
-      return Response.json({ success: true });
-    }
 
     const subscription = body.subscription;
     const endpoint = parseEndpoint(subscription?.endpoint);

@@ -105,21 +105,6 @@ export async function deletePushSubscription(userId: string, endpoint: string) {
   });
 }
 
-export async function getPushSubscription(userId: string, endpoint: string) {
-  await ensureSchema();
-  const result = await getClient().execute({
-    sql: `
-      SELECT endpoint, user_id, subscription_json, time_zone, locale,
-             next_notification_at
-      FROM push_subscriptions
-      WHERE user_id = ? AND endpoint = ? AND enabled = 1
-      LIMIT 1
-    `,
-    args: [userId, endpoint],
-  });
-  return result.rows[0] ? rowToSubscription(result.rows[0]) : null;
-}
-
 function rowToSubscription(row: Record<string, unknown>): StoredPushSubscription {
   return {
     endpoint: String(row.endpoint),

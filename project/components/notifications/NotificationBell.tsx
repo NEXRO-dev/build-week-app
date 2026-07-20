@@ -1,18 +1,16 @@
 "use client";
 
-import { Bell, BellOff, Check, Clock3, LoaderCircle, Send, X } from "lucide-react";
+import { Bell, BellOff, Check, Clock3, LoaderCircle, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
 import { useI18n } from "@/lib/i18n";
+import {
+  announcePushNotificationChange,
+  PUSH_NOTIFICATION_CHANGE_EVENT,
+  vapidKeyToBytes,
+} from "@/lib/notifications/client";
 
 type PushState = "loading" | "unsupported" | "unconfigured" | "off" | "on" | "denied";
-
-function urlBase64ToUint8Array(value: string) {
-  const padding = "=".repeat((4 - value.length % 4) % 4);
-  const base64 = (value + padding).replace(/-/g, "+").replace(/_/g, "/");
-  const bytes = window.atob(base64);
-  return Uint8Array.from(bytes, (character) => character.charCodeAt(0));
-}
 
 export function NotificationBell({ timeZone }: { timeZone: string }) {
   const { locale, isEnglish, t } = useI18n();
@@ -23,7 +21,6 @@ export function NotificationBell({ timeZone }: { timeZone: string }) {
   const [drawerMounted, setDrawerMounted] = useState(false);
   const [state, setState] = useState<PushState>("loading");
   const [publicKey, setPublicKey] = useState<string | null>(null);
-  const [subscription, setSubscription] = useState<PushSubscription | null>(null);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
 
@@ -48,7 +45,6 @@ export function NotificationBell({ timeZone }: { timeZone: string }) {
           : null;
         const existing = await registration?.pushManager.getSubscription() ?? null;
         if (cancelled) return;
-        setSubscription(existing);
         setPublicKey(config?.publicKey ?? null);
         setState(!config?.configured ? "unconfigured" : existing ? "on" : "off");
         if (config?.configured && existing) {
@@ -69,7 +65,12 @@ export function NotificationBell({ timeZone }: { timeZone: string }) {
       }
     }
     void loadState();
-    return () => { cancelled = true; };
+    const handleSubscriptionChange = () => void loadState();
+    window.addEventListener(PUSH_NOTIFICATION_CHANGE_EVENT, handleSubscriptionChange);
+    return () => {
+      cancelled = true;
+      window.removeEventListener(PUSH_NOTIFICATION_CHANGE_EVENT, handleSubscriptionChange);
+    };
   }, [locale, timeZone]);
 
   useEffect(() => {
@@ -141,7 +142,7 @@ export function NotificationBell({ timeZone }: { timeZone: string }) {
       const nextSubscription = await registration.pushManager.getSubscription()
         ?? await registration.pushManager.subscribe({
           userVisibleOnly: true,
-          applicationServerKey: urlBase64ToUint8Array(publicKey),
+          applicationServerKey: vapidKeyToBytes(publicKey),
         });
       const response = await fetch("/api/notifications", {
         method: "POST",
@@ -153,52 +154,11 @@ export function NotificationBell({ timeZone }: { timeZone: string }) {
         }),
       });
       if (!response.ok) throw new Error("subscribe_failed");
-      setSubscription(nextSubscription);
       setState("on");
       setMessage(t("20:00の通知をオンにしました。", "8:00 PM notifications are on."));
+      announcePushNotificationChange();
     } catch {
       setMessage(t("通知をオンにできませんでした。もう一度お試しください。", "Notifications could not be enabled. Please try again."));
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function disableNotifications() {
-    if (!subscription) return;
-    setBusy(true);
-    setMessage(null);
-    try {
-      const response = await fetch("/api/notifications", {
-        method: "DELETE",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ endpoint: subscription.endpoint }),
-      });
-      if (!response.ok) throw new Error("unsubscribe_failed");
-      await subscription.unsubscribe();
-      setSubscription(null);
-      setState("off");
-      setMessage(t("通知をオフにしました。", "Notifications are off."));
-    } catch {
-      setMessage(t("通知設定を変更できませんでした。", "Notification settings could not be changed."));
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function sendTestNotification() {
-    if (!subscription) return;
-    setBusy(true);
-    setMessage(null);
-    try {
-      const response = await fetch("/api/notifications", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "test", endpoint: subscription.endpoint }),
-      });
-      if (!response.ok) throw new Error("test_failed");
-      setMessage(t("テスト通知を送信しました。", "Test notification sent."));
-    } catch {
-      setMessage(t("テスト通知を送信できませんでした。", "The test notification could not be sent."));
     } finally {
       setBusy(false);
     }
@@ -279,20 +239,13 @@ export function NotificationBell({ timeZone }: { timeZone: string }) {
               {state === "unconfigured" ? <p className="mt-3 rounded-lg bg-[#fff7e8] px-3 py-2 text-xs leading-5 text-[#8a5c12]">{t("Push通知のサーバー設定が完了していません。", "The Push notification server has not been configured yet.")}</p> : null}
               {message ? <p role="status" className="mt-3 text-xs leading-5 text-[#59617e]">{message}</p> : null}
 
-              <div className="mt-4 flex gap-2">
-                {state === "on" ? (
-                  <>
-                    <button type="button" disabled={busy} onClick={sendTestNotification} className="flex min-h-10 flex-1 items-center justify-center gap-2 rounded-lg border border-[#dfe1ea] px-3 text-xs font-bold text-[#4f5878] disabled:opacity-50">
-                      {busy ? <LoaderCircle size={15} className="animate-spin" /> : <Send size={15} />}{t("テスト送信", "Send test")}
-                    </button>
-                    <button type="button" disabled={busy} onClick={disableNotifications} className="min-h-10 rounded-lg px-3 text-xs font-bold text-[#a43a4a] disabled:opacity-50">{t("オフにする", "Turn off")}</button>
-                  </>
-                ) : (
+              {state !== "on" ? (
+                <div className="mt-4">
                   <button type="button" disabled={busy || state === "loading" || state === "unsupported" || state === "denied" || state === "unconfigured"} onClick={enableNotifications} className="flex min-h-11 w-full items-center justify-center gap-2 rounded-lg bg-[#5b42ff] px-4 text-xs font-bold text-white disabled:bg-[#c7c9d4]">
                     {busy ? <LoaderCircle size={16} className="animate-spin" /> : <Bell size={16} />}{t("20:00の通知をオンにする", "Turn on 8:00 PM reminders")}
                   </button>
-                )}
-              </div>
+                </div>
+              ) : null}
               {isEnglish ? null : <p className="mt-3 text-center text-[10px] text-[#8a91aa]">通知時刻は端末のタイムゾーンに合わせて自動更新されます</p>}
             </div>
           </aside>

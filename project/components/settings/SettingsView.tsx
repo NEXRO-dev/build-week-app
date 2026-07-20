@@ -1,13 +1,19 @@
 "use client";
 
 import { Button, Switch } from "@heroui/react";
-import { Bug, CalendarDays, ChevronRight, Database, LogOut, Mail, ShieldCheck, UserRound } from "lucide-react";
+import { Bell, BellOff, Bug, CalendarDays, ChevronRight, Database, LogOut, Mail, ShieldCheck, UserRound } from "lucide-react";
 import Image from "next/image";
 import Link from "next/link";
 import { type ReactNode, useEffect, useState } from "react";
 
 import { authClient } from "@/lib/auth-client";
 import { useI18n } from "@/lib/i18n";
+import {
+  announcePushNotificationChange,
+  isRunningAsPwa,
+  PUSH_NOTIFICATION_CHANGE_EVENT,
+  vapidKeyToBytes,
+} from "@/lib/notifications/client";
 
 type Props = {
   user: { name: string; email: string; image?: string | null };
@@ -47,12 +53,70 @@ export function SettingsView({
   const { locale, isEnglish, t } = useI18n();
   const [now, setNow] = useState(() => new Date());
   const [failedAvatarUrl, setFailedAvatarUrl] = useState<string | null>(null);
+  const [pushSubscription, setPushSubscription] =
+    useState<PushSubscription | null>(null);
+  const [isPwa, setIsPwa] = useState(false);
+  const [vapidPublicKey, setVapidPublicKey] = useState<string | null>(null);
+  const [notificationState, setNotificationState] = useState<
+    "loading" | "unsupported" | "unconfigured" | "denied" | "off" | "on"
+  >("loading");
+  const [notificationBusy, setNotificationBusy] = useState(false);
+  const [notificationMessage, setNotificationMessage] = useState<string | null>(null);
   const profileImageUrl =
     user.image && failedAvatarUrl !== user.image ? user.image : null;
 
   useEffect(() => {
     const intervalId = window.setInterval(() => setNow(new Date()), 30_000);
     return () => window.clearInterval(intervalId);
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadNotificationState() {
+      const standalone = isRunningAsPwa();
+      if (!cancelled) setIsPwa(standalone);
+      if (!standalone) return;
+
+      if (
+        !("serviceWorker" in navigator) ||
+        !("PushManager" in window) ||
+        !("Notification" in window)
+      ) {
+        if (!cancelled) setNotificationState("unsupported");
+        return;
+      }
+
+      if (Notification.permission === "denied") {
+        if (!cancelled) setNotificationState("denied");
+        return;
+      }
+
+      try {
+        const [response, registration] = await Promise.all([
+          fetch("/api/notifications"),
+          navigator.serviceWorker.getRegistration("/"),
+        ]);
+        const config = response.ok
+          ? await response.json() as { configured?: boolean; publicKey?: string | null }
+          : null;
+        const existing = await registration?.pushManager.getSubscription() ?? null;
+        if (cancelled) return;
+        setPushSubscription(existing);
+        setVapidPublicKey(config?.publicKey ?? null);
+        setNotificationState(!config?.configured ? "unconfigured" : existing ? "on" : "off");
+      } catch {
+        if (!cancelled) setNotificationState("off");
+      }
+    }
+
+    void loadNotificationState();
+    const handleSubscriptionChange = () => void loadNotificationState();
+    window.addEventListener(PUSH_NOTIFICATION_CHANGE_EVENT, handleSubscriptionChange);
+    return () => {
+      cancelled = true;
+      window.removeEventListener(PUSH_NOTIFICATION_CHANGE_EVENT, handleSubscriptionChange);
+    };
   }, []);
 
   function currentTimeAt(timeZone: string) {
@@ -67,6 +131,82 @@ export function SettingsView({
   async function signOut() {
     await authClient.signOut();
     window.location.assign(`/${locale}`);
+  }
+
+  async function enableNotifications() {
+    if (!vapidPublicKey) return;
+    setNotificationBusy(true);
+    setNotificationMessage(null);
+
+    try {
+      const permission = await Notification.requestPermission();
+      if (permission !== "granted") {
+        setNotificationState(permission === "denied" ? "denied" : "off");
+        return;
+      }
+
+      const registration = await navigator.serviceWorker.register("/sw.js", {
+        scope: "/",
+        updateViaCache: "none",
+      });
+      const nextSubscription = await registration.pushManager.getSubscription()
+        ?? await registration.pushManager.subscribe({
+          userVisibleOnly: true,
+          applicationServerKey: vapidKeyToBytes(vapidPublicKey),
+        });
+      const response = await fetch("/api/notifications", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          subscription: nextSubscription.toJSON(),
+          timeZone,
+          locale,
+        }),
+      });
+      if (!response.ok) throw new Error("subscribe_failed");
+
+      setPushSubscription(nextSubscription);
+      setNotificationState("on");
+      setNotificationMessage(t("通知をオンにしました。", "Notifications are on."));
+      announcePushNotificationChange();
+    } catch {
+      setNotificationMessage(t("通知をオンにできませんでした。", "Notifications could not be enabled."));
+    } finally {
+      setNotificationBusy(false);
+    }
+  }
+
+  async function disableNotifications() {
+    if (!pushSubscription) return;
+    setNotificationBusy(true);
+    setNotificationMessage(null);
+
+    try {
+      const response = await fetch("/api/notifications", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ endpoint: pushSubscription.endpoint }),
+      });
+      if (!response.ok) throw new Error("unsubscribe_failed");
+
+      await pushSubscription.unsubscribe().catch(() => false);
+      setPushSubscription(null);
+      setNotificationState("off");
+      setNotificationMessage(t("通知をオフにしました。", "Notifications are off."));
+      announcePushNotificationChange();
+    } catch {
+      setNotificationMessage(t("通知設定を変更できませんでした。", "Notification settings could not be changed."));
+    } finally {
+      setNotificationBusy(false);
+    }
+  }
+
+  function handleNotificationChange(enabled: boolean) {
+    if (enabled) {
+      void enableNotifications();
+    } else {
+      void disableNotifications();
+    }
   }
 
   return (
@@ -87,6 +227,44 @@ export function SettingsView({
         </section>
 
         <section><h2 className="mb-2 text-xs font-bold">{t("Google連携", "Google integrations")}</h2><div className="divide-y divide-[#ececf3] rounded-lg border border-[#e3e5ef]"><Row icon={CalendarDays} title="Google Calendar" description={t("未連携", "Not connected")} /></div></section>
+
+        {isPwa ? <section>
+          <h2 className="mb-2 text-xs font-bold">{t("通知", "Notifications")}</h2>
+          <div className="rounded-lg border border-[#e3e5ef] p-3">
+            <div className="flex min-w-0 items-center gap-3">
+              <span className={`grid size-9 shrink-0 place-items-center rounded-full ${notificationState === "on" ? "bg-[#efedff] text-[#5b42ff]" : "bg-[#f2f4fa] text-[#68708f]"}`}>
+                {notificationState === "on" ? <Bell size={17} /> : <BellOff size={17} />}
+              </span>
+              <div className="min-w-0 flex-1">
+                <p className="text-xs font-bold">{t("夜のチェックイン通知", "Evening check-in reminder")}</p>
+                <p className="mt-1 text-[10px] leading-4 text-[#727a97]">
+                  {notificationState === "loading"
+                    ? t("通知状態を確認しています", "Checking notification status")
+                    : notificationState === "unsupported"
+                      ? t("この端末では利用できません", "Unavailable on this device")
+                      : notificationState === "unconfigured"
+                        ? t("Push通知のサーバー設定が必要です", "Push notification server setup is required")
+                        : notificationState === "denied"
+                          ? t("端末設定で通知がブロックされています", "Notifications are blocked in device settings")
+                      : notificationState === "on"
+                        ? t(`毎日20:00（${timeZone}）`, `Daily at 8:00 PM (${timeZone})`)
+                        : t("現在の端末ではオフです", "Off on this device")}
+                </p>
+              </div>
+              <Switch
+                aria-label={t("夜のチェックイン通知", "Evening check-in reminder")}
+                isSelected={notificationState === "on"}
+                isDisabled={notificationBusy || notificationState === "loading" || notificationState === "unsupported" || notificationState === "unconfigured" || notificationState === "denied"}
+                onChange={handleNotificationChange}
+                size="sm"
+                className="shrink-0"
+              >
+                <Switch.Content><Switch.Control><Switch.Thumb /></Switch.Control></Switch.Content>
+              </Switch>
+            </div>
+            {notificationMessage ? <p role="status" className="mt-2 text-[10px] leading-4 text-[#68708f]">{notificationMessage}</p> : null}
+          </div>
+        </section> : null}
 
         <section><h2 className="mb-2 text-xs font-bold text-[#4e3ad0]">{t("データとプライバシー", "Data & privacy")}</h2><div className="divide-y divide-[#ececf3] rounded-lg border border-[#e3e5ef]"><Row icon={Database} title={t("クラウド同期", "Cloud sync")} description={t("履歴・予定・設定をアカウントごとに保存", "History, plans, and settings are saved per account")} action={<span className="rounded bg-[#eaf8f2] px-2 py-1 text-[9px] font-bold text-[#23775d]">{t("有効", "On")}</span>} /><Row icon={ShieldCheck} title={t("録音音声は保存しません", "Raw audio is not stored")} description={t("処理後に削除し、文字起こしと音声特徴だけを保存", "Deleted after processing; only transcripts and voice features are saved")} action={<ShieldCheck size={16} className="shrink-0 text-[#23966f]" />} /></div></section>
 
