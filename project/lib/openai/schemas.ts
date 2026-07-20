@@ -155,12 +155,14 @@ export const CalendarEventSchema = z.object({
 });
 
 export const TaskExtractionRequestSchema = z.object({
+  locale: z.enum(["jp-ja", "us-en"]).default("jp-ja"),
   transcript: z.string().trim().min(1).max(12000),
   referenceDate: z.string().datetime(),
   timeZone: z.string().min(1).max(100),
 });
 
 export const AnalyzeRequestSchema = z.object({
+  locale: z.enum(["jp-ja", "us-en"]).default("jp-ja"),
   transcript: z.string().trim().min(1).max(12000),
   audioMeta: AudioMetaSchema,
   audioBaseline: z.array(AudioMetaSchema).max(30).default([]),
@@ -170,12 +172,14 @@ export const AnalyzeRequestSchema = z.object({
 });
 
 export const PlanRequestSchema = z.object({
+  locale: z.enum(["jp-ja", "us-en"]).default("jp-ja"),
   tasks: z.array(ExtractedTaskSchema).max(30),
   condition: ConditionSignalSchema,
   calendarEvents: z.array(CalendarEventSchema).max(50),
 });
 
 export const DraftEmailRequestSchema = z.object({
+  locale: z.enum(["jp-ja", "us-en"]).default("jp-ja"),
   rescheduleItem: PlanItemSchema,
   tone: z.enum(["polite", "casual", "formal"]),
 });

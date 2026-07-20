@@ -15,6 +15,7 @@ import {
   type PointerEvent as ReactPointerEvent,
 } from "react";
 
+import { useI18n } from "@/lib/i18n";
 import {
   movePlanItemToTime,
   type EditablePlanItemKind,
@@ -74,11 +75,11 @@ function slotFor(time: string) {
   return value === null ? null : clock(Math.floor(value / 30) * 30);
 }
 
-function timeline(plan: TomorrowPlan): TimelineItem[] {
+function timeline(plan: TomorrowPlan, isEnglish: boolean): TimelineItem[] {
   return [
     ...plan.keep.map((item) => ({
       id: item.id,
-      time: item.proposedTime ?? item.originalTime ?? "未定",
+      time: item.proposedTime ?? item.originalTime ?? (isEnglish ? "TBD" : "未定"),
       end: item.endTime,
       title: item.title,
       kind: "keep" as const,
@@ -86,7 +87,7 @@ function timeline(plan: TomorrowPlan): TimelineItem[] {
     })),
     ...plan.move.map((item) => ({
       id: item.id,
-      time: item.proposedTime ?? item.originalTime ?? "未定",
+      time: item.proposedTime ?? item.originalTime ?? (isEnglish ? "TBD" : "未定"),
       end: item.endTime,
       title: item.title,
       kind: "move" as const,
@@ -96,7 +97,7 @@ function timeline(plan: TomorrowPlan): TimelineItem[] {
       id: item.id,
       time: item.startTime,
       end: item.endTime,
-      title: "休息ブロック",
+      title: isEnglish ? "Rest block" : "休息ブロック",
       kind: "rest" as const,
       detail: item.reason,
     })),
@@ -106,14 +107,16 @@ function timeline(plan: TomorrowPlan): TimelineItem[] {
   );
 }
 
-function rescheduledItems(plan: TomorrowPlan): TimelineItem[] {
+function rescheduledItems(plan: TomorrowPlan, isEnglish: boolean): TimelineItem[] {
   return plan.reschedule.map((item) => ({
     id: item.id,
-    time: item.originalTime ?? "未定",
+    time: item.originalTime ?? (isEnglish ? "TBD" : "未定"),
     end: item.endTime,
     title: item.title,
     kind: "reschedule",
-    detail: (item.proposedTime ?? "翌日以降") + "へ延期",
+    detail: isEnglish
+      ? "Move to " + (item.proposedTime ?? "a later date")
+      : (item.proposedTime ?? "翌日以降") + "へ延期",
   }));
 }
 
@@ -144,8 +147,12 @@ export function PlanView({
   onBack,
   onApproval,
 }: Props) {
-  const items = useMemo(() => timeline(plan), [plan]);
-  const deferred = useMemo(() => rescheduledItems(plan), [plan]);
+  const { isEnglish, t } = useI18n();
+  const items = useMemo(() => timeline(plan, isEnglish), [isEnglish, plan]);
+  const deferred = useMemo(
+    () => rescheduledItems(plan, isEnglish),
+    [isEnglish, plan],
+  );
   const slots = useMemo(() => timeSlots(items), [items]);
   const dragRef = useRef<DragSession | null>(null);
   const scheduleRef = useRef<HTMLDivElement | null>(null);
@@ -261,8 +268,8 @@ export function PlanView({
         <div className="flex min-w-0 items-start gap-1.5">
           <button
             type="button"
-            aria-label={item.title + "の時刻を移動"}
-            title="時刻をドラッグして変更"
+            aria-label={item.title + t("の時刻を移動", " time: drag to move")}
+            title={t("時刻をドラッグして変更", "Drag to change time")}
             className="mt-0.5 grid size-7 shrink-0 touch-none place-items-center text-current/70 active:cursor-grabbing"
             onPointerDown={(event) => beginDrag(event, item)}
 
@@ -285,7 +292,7 @@ export function PlanView({
             </p>
           </div>
           <label className="flex shrink-0 items-center text-[#56607d]">
-            <span className="sr-only">{item.title}の開始時刻</span>
+            <span className="sr-only">{item.title}{t("の開始時刻", " start time")}</span>
             <input
               type="time"
               step={1800}
@@ -305,22 +312,22 @@ export function PlanView({
         <button
           type="button"
           onClick={onBack}
-          aria-label="戻る"
+          aria-label={t("戻る", "Back")}
           className="grid size-10 place-items-center"
         >
           <ArrowLeft size={20} />
         </button>
-        <h1 className="text-center text-base font-bold">明日のプラン</h1>
+        <h1 className="text-center text-base font-bold">{t("明日のプラン", "Tomorrow's plan")}</h1>
         <CalendarDays size={19} className="mx-auto text-[#545d7d]" />
       </header>
 
       <div className="px-4 pb-8 pt-4">
         <p className="mb-4 text-center text-xs font-semibold text-[#545d7d]">
-          無理なく進めるための予定です
+          {t("無理なく進めるための予定です", "A manageable schedule for your day")}
         </p>
 
         <section>
-          <h2 className="mb-2 text-xs font-bold">時間割</h2>
+          <h2 className="mb-2 text-xs font-bold">{t("時間割", "Schedule")}</h2>
           <div
             ref={scheduleRef}
             className="max-h-[62vh] overflow-y-auto overscroll-contain border-y border-[#e5e7ef]"
@@ -351,13 +358,13 @@ export function PlanView({
 
         {unscheduled.length ? (
           <section className="mt-5">
-            <h2 className="mb-2 text-xs font-bold">時間未定・延期候補</h2>
+            <h2 className="mb-2 text-xs font-bold">{t("時間未定・延期候補", "Unscheduled and reschedule options")}</h2>
             <div className="space-y-2">{unscheduled.map(renderCard)}</div>
           </section>
         ) : null}
 
         <section className="mt-5 rounded-lg border border-[#e3e5ef] p-4">
-          <h2 className="text-xs font-bold">維持する予定</h2>
+          <h2 className="text-xs font-bold">{t("維持する予定", "Plans to keep")}</h2>
           <ul className="mt-3 space-y-2">
             {plan.keep.map((item) => (
               <li
@@ -373,7 +380,7 @@ export function PlanView({
             ))}
             {!plan.keep.length ? (
               <li className="text-xs text-[#717997]">
-                維持する予定はありません
+                {t("維持する予定はありません", "No fixed plans")}
               </li>
             ) : null}
           </ul>
@@ -386,7 +393,7 @@ export function PlanView({
           onPress={onApproval}
           className="mt-5 h-12 bg-[#5b42ff] text-white"
         >
-          変更内容を確認
+          {t("変更内容を確認", "Review changes")}
           <ArrowRight size={18} />
         </Button>
       </div>

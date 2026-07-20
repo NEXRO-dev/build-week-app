@@ -17,7 +17,11 @@ import {
 } from "lucide-react";
 import { useEffect, useState } from "react";
 
-import { SAMPLE_TRANSCRIPT } from "@/lib/demo/sampleCheckIns";
+import {
+  SAMPLE_TRANSCRIPT,
+  SAMPLE_TRANSCRIPT_EN,
+} from "@/lib/demo/sampleCheckIns";
+import { useI18n } from "@/lib/i18n";
 import { isTomorrowActionableTask } from "@/lib/tasks/temporal";
 import type {
   AudioMeta,
@@ -87,7 +91,41 @@ const assessmentQuestions: AssessmentQuestion[] = [
   },
 ];
 
+const englishWorkloadOptions = [
+  { label: "Very low", value: 0 },
+  { label: "Low", value: 25 },
+  { label: "Moderate", value: 50 },
+  { label: "High", value: 75 },
+  { label: "Very high", value: 100 },
+];
+
+const englishAssessmentQuestions: AssessmentQuestion[] = [
+  { key: "mentalDemand", eyebrow: "Mental demand", question: "How mentally demanding was your day?", options: englishWorkloadOptions },
+  { key: "physicalDemand", eyebrow: "Physical demand", question: "How physically demanding was your day?", options: englishWorkloadOptions },
+  { key: "temporalDemand", eyebrow: "Time pressure", question: "How rushed or pressed for time did you feel today?", options: englishWorkloadOptions },
+  { key: "performance", eyebrow: "Performance dissatisfaction", question: "How dissatisfied are you with what you accomplished today?", options: [{ label: "Very satisfied", value: 0 }, { label: "Somewhat satisfied", value: 25 }, { label: "Neutral", value: 50 }, { label: "Somewhat dissatisfied", value: 75 }, { label: "Very dissatisfied", value: 100 }] },
+  { key: "effort", eyebrow: "Effort", question: "How much effort did it take to get through today?", options: englishWorkloadOptions },
+  { key: "frustration", eyebrow: "Frustration", question: "How anxious or frustrated did you feel today?", options: englishWorkloadOptions },
+  {
+    key: "sleepiness",
+    eyebrow: "Current sleepiness",
+    question: "Which option best describes how sleepy you feel now?",
+    options: [
+      "Extremely alert",
+      "Very alert",
+      "Alert",
+      "Fairly alert",
+      "Neither alert nor sleepy",
+      "Somewhat sleepy",
+      "Sleepy, but no difficulty staying awake",
+      "Sleepy and making an effort to stay awake",
+      "Very sleepy and struggling to stay awake",
+    ].map((label, index) => ({ label, value: index + 1 })),
+  },
+];
+
 type CheckInViewProps = {
+  userName: string;
   todayLabel: string;
   timeZone: string;
   previousCondition: ConditionSignal | null;
@@ -118,7 +156,9 @@ type CheckInViewProps = {
 };
 
 export function CheckInView(props: CheckInViewProps) {
+  const { isEnglish, t } = useI18n();
   const {
+    userName,
     todayLabel,
     timeZone,
     previousCondition,
@@ -149,7 +189,10 @@ export function CheckInView(props: CheckInViewProps) {
   const [mode, setMode] = useState<CheckInMode>("planning");
   const [assessmentOpen, setAssessmentOpen] = useState(false);
   const [assessmentIndex, setAssessmentIndex] = useState(0);
-  const assessmentQuestion = assessmentQuestions[assessmentIndex];
+  const localizedAssessmentQuestions = isEnglish
+    ? englishAssessmentQuestions
+    : assessmentQuestions;
+  const assessmentQuestion = localizedAssessmentQuestions[assessmentIndex];
   const currentAudioBlob = audioByMode[mode];
   const currentTranscript = transcriptByMode[mode];
   const tomorrowTaskCount = scheduleEntries.reduce(
@@ -174,7 +217,7 @@ export function CheckInView(props: CheckInViewProps) {
   }, [onRetryRecordingShown, retryRecordingMode]);
 
   function startAssessment() {
-    const firstUnanswered = assessmentQuestions.findIndex(
+    const firstUnanswered = localizedAssessmentQuestions.findIndex(
       (question) => !Number.isFinite(selfReport[question.key]),
     );
     setAssessmentIndex(firstUnanswered >= 0 ? firstUnanswered : 0);
@@ -185,7 +228,7 @@ export function CheckInView(props: CheckInViewProps) {
     const nextReport = { ...selfReport, [question.key]: value };
     onSelfReportChange(question.key, value);
 
-    if (assessmentIndex < assessmentQuestions.length - 1) {
+    if (assessmentIndex < localizedAssessmentQuestions.length - 1) {
       setAssessmentIndex((current) => current + 1);
       return;
     }
@@ -196,16 +239,28 @@ export function CheckInView(props: CheckInViewProps) {
   }
 
   const reflectionLocked = reflectionStatus !== "available";
+  const greetingName = userName.trim();
+  const greetingSuffix = !isEnglish && !greetingName.endsWith("さん") ? "さん" : "";
   const prompt = mode === "reflection"
     ? {
-        title: "今日の振り返り",
-        text: "今日起きたこと、進んだこと、詰まったことや疲れを話してください。",
-        examples: ["進んだこと", "詰まったこと", "疲れや集中度"],
+        title: t("今日の振り返り", "Reflect on today"),
+        text: t(
+          "今日起きたこと、進んだこと、詰まったことや疲れを話してください。",
+          "Tell us what happened today, what moved forward, what felt blocked, and how tired you felt.",
+        ),
+        examples: isEnglish
+          ? ["What moved forward", "What felt blocked", "Energy and focus"]
+          : ["進んだこと", "詰まったこと", "疲れや集中度"],
       }
     : {
-        title: "明日の予定を追加",
-        text: "明日の予定・締切・やることを、思い出したときに追加できます。",
-        examples: ["明日の会議", "やるべき作業", "動かせない予定"],
+        title: t("明日の予定を追加", "Add tomorrow's plans"),
+        text: t(
+          "明日の予定・締切・やることを、思い出したときに追加できます。",
+          "Add tomorrow's plans, deadlines, and tasks whenever they come to mind.",
+        ),
+        examples: isEnglish
+          ? ["Tomorrow's meetings", "Work to complete", "Fixed commitments"]
+          : ["明日の会議", "やるべき作業", "動かせない予定"],
       };
 
   return (
@@ -219,15 +274,15 @@ export function CheckInView(props: CheckInViewProps) {
       </header>
 
       <div className="px-5 pb-8 pt-5">
-        <h1 className="text-[20px] font-bold leading-7">おつかれさまです、Ryoさん</h1>
+        <h1 className="text-[20px] font-bold leading-7">{isEnglish ? "Welcome back, " + greetingName : "おつかれさまです、" + greetingName + greetingSuffix}</h1>
         <p className="mt-1 text-xs text-[#606985]">{todayLabel}・{timeZone}</p>
 
         <section className="mt-5 flex min-w-0 items-center gap-3 rounded-lg border border-[#e4e6ef] p-4">
           <span className="grid size-11 shrink-0 place-items-center rounded-full bg-[#eff4ff] text-[#4266e8]"><Activity size={21} /></span>
           <div className="min-w-0">
-            <p className="text-xs font-medium text-[#626b89]">直近の状態</p>
+            <p className="text-xs font-medium text-[#626b89]">{t("直近の状態", "Latest status")}</p>
             <p className="mt-1 text-sm font-bold">
-              {previousCondition?.score !== undefined ? `${previousCondition.score}/100・${previousCondition.label}` : "まだ記録がありません"}
+              {previousCondition?.score !== undefined ? `${previousCondition.score}/100・${previousCondition.label}` : t("まだ記録がありません", "No records yet")}
             </p>
           </div>
         </section>
@@ -244,7 +299,7 @@ export function CheckInView(props: CheckInViewProps) {
             className={`flex min-h-11 items-center justify-center gap-2 rounded-md px-2 text-xs font-bold ${mode === "reflection" ? "bg-white text-[#4d35db] shadow-sm" : "text-[#68708f]"}`}
           >
             {reflectionStatus === "completed" ? <Check size={15} /> : reflectionStatus === "too-early" ? <LockKeyhole size={15} /> : <MessageSquareText size={15} />}
-            今日の振り返り
+            {t("今日の振り返り", "Today")}
           </button>
           <button
             type="button"
@@ -253,7 +308,7 @@ export function CheckInView(props: CheckInViewProps) {
             onClick={() => setMode("planning")}
             className={`flex min-h-11 items-center justify-center gap-2 rounded-md px-2 text-xs font-bold ${mode === "planning" ? "bg-white text-[#13705f] shadow-sm" : "text-[#68708f]"}`}
           >
-            <Plus size={15} />明日の予定
+            <Plus size={15} />{t("明日の予定", "Tomorrow")}
           </button>
         </div>
 
@@ -276,14 +331,14 @@ export function CheckInView(props: CheckInViewProps) {
           {mode === "reflection" && reflectionStatus === "too-early" ? (
             <div className="flex items-center gap-3 border-t border-[#eceef6] px-4 py-5">
               <span className="grid size-10 shrink-0 place-items-center rounded-full bg-[#f2f3f7] text-[#68708f]"><Clock3 size={19} /></span>
-              <div><p className="text-sm font-bold">20:00から振り返れます</p><p className="mt-1 text-xs text-[#68708f]">端末のタイムゾーンで判定しています。</p></div>
+              <div><p className="text-sm font-bold">{t("20:00から振り返れます", "Reflection opens at 8:00 PM")}</p><p className="mt-1 text-xs text-[#68708f]">{t("端末のタイムゾーンで判定しています。", "Based on your device time zone.")}</p></div>
             </div>
           ) : null}
 
           {mode === "reflection" && reflectionStatus === "completed" ? (
             <div className="flex items-center gap-3 border-t border-[#eceef6] px-4 py-5">
               <span className="grid size-10 shrink-0 place-items-center rounded-full bg-[#eaf8f2] text-[#23966f]"><Check size={20} /></span>
-              <div><p className="text-sm font-bold">今日の振り返りは完了しました</p><p className="mt-1 text-xs text-[#68708f]">{reflectionCompletedAt ? `${reflectionCompletedAt}に記録` : "1日1回の記録済み"}</p></div>
+              <div><p className="text-sm font-bold">{t("今日の振り返りは完了しました", "Today's reflection is complete")}</p><p className="mt-1 text-xs text-[#68708f]">{reflectionCompletedAt ? `${reflectionCompletedAt}に記録` : "1日1回の記録済み"}</p></div>
             </div>
           ) : null}
         </section>
@@ -296,18 +351,18 @@ export function CheckInView(props: CheckInViewProps) {
             onError={props.onError}
             onPrimaryAction={mode === "reflection" ? startAssessment : onAddSchedule}
             isProcessing={Boolean(processingStage)}
-            idleLabel={mode === "reflection" ? "今日の振り返りを録音" : "明日の予定を録音"}
-            recordingLabel="録音中"
-            recordedLabel="録音できました"
-            durationHint={mode === "reflection" ? "目安：30秒〜1分" : "目安：30秒〜2分"}
-            primaryActionLabel={mode === "reflection" ? "自己評価へ" : "予定を追加"}
+            idleLabel={mode === "reflection" ? t("今日の振り返りを録音", "Record today's reflection") : t("明日の予定を録音", "Record tomorrow's plans")}
+            recordingLabel={t("録音中", "Recording")}
+            recordedLabel={t("録音できました", "Recording ready")}
+            durationHint={mode === "reflection" ? t("目安：30秒〜1分", "About 30–60 seconds") : t("目安：30秒〜2分", "About 30 seconds–2 minutes")}
+            primaryActionLabel={mode === "reflection" ? t("自己評価へ", "Continue to self-check") : t("予定を追加", "Add plans")}
             tone={mode}
           />
         ) : null}
 
         {(mode === "planning" || !reflectionLocked) ? (
           <details className="group mt-5 rounded-lg border border-[#e7e8f0] bg-white">
-            <summary className="flex cursor-pointer list-none items-center justify-center gap-2 px-4 py-3 text-xs font-medium text-[#5e6683] [&::-webkit-details-marker]:hidden"><FlaskConical size={14} /> テキストで入力</summary>
+            <summary className="flex cursor-pointer list-none items-center justify-center gap-2 px-4 py-3 text-xs font-medium text-[#5e6683] [&::-webkit-details-marker]:hidden"><FlaskConical size={14} /> {t("テキストで入力", "Type instead")}</summary>
             <div className="border-t border-[#ececf3] p-3">
               <TextField fullWidth className="w-full">
                 <Label className="sr-only">{prompt.title}</Label>
@@ -316,12 +371,12 @@ export function CheckInView(props: CheckInViewProps) {
                   onInput={(event) => onTranscriptChange(mode, event.currentTarget.value)}
                   rows={5}
                   fullWidth
-                  placeholder={mode === "reflection" ? "今日あったことや感じた負担" : "明日の会議、作業、締切など"}
+                  placeholder={mode === "reflection" ? t("今日あったことや感じた負担", "What happened today and how it felt") : t("明日の会議、作業、締切など", "Tomorrow's meetings, tasks, and deadlines")}
                   className="min-h-32 w-full resize-none rounded-md border border-[#dfe2ec] bg-white px-3 py-2 text-sm leading-6 text-[#27304d] outline-none focus:border-[#6d58ff] focus:ring-2 focus:ring-[#ded9ff]"
                 />
               </TextField>
               <div className="mt-2 flex flex-wrap gap-2">
-                <Button size="sm" variant="ghost" onPress={() => onTranscriptChange(mode, mode === "reflection" ? REFLECTION_SAMPLE : SAMPLE_TRANSCRIPT)} className="min-w-0">デモ文を入力</Button>
+                <Button size="sm" variant="ghost" onPress={() => onTranscriptChange(mode, mode === "reflection" ? (isEnglish ? "I finished preparing the materials today. The afternoon was full of meetings, so I feel a little tired." : REFLECTION_SAMPLE) : (isEnglish ? SAMPLE_TRANSCRIPT_EN : SAMPLE_TRANSCRIPT))} className="min-w-0">{t("デモ文を入力", "Insert demo text")}</Button>
                 <Button
                   size="sm"
                   variant="primary"
@@ -329,7 +384,7 @@ export function CheckInView(props: CheckInViewProps) {
                   onPress={mode === "reflection" ? startAssessment : onAddSchedule}
                   className={`ml-auto min-w-20 text-white ${mode === "reflection" ? "bg-[#5b42ff]" : "bg-[#168f78]"}`}
                 >
-                  {mode === "reflection" ? "自己評価へ" : "予定を追加"}
+                  {mode === "reflection" ? t("自己評価へ", "Continue to self-check") : t("予定を追加", "Add plans")}
                 </Button>
               </div>
             </div>
@@ -339,8 +394,8 @@ export function CheckInView(props: CheckInViewProps) {
         {mode === "planning" ? (
           <section className="mt-5 border-t border-[#e7e8f0] pt-5">
             <div className="flex items-center justify-between gap-3">
-              <div><h2 className="text-sm font-bold">追加済みの明日の予定</h2><p className="mt-1 text-xs text-[#68708f]">{tomorrowTaskCount}件</p></div>
-              {tomorrowTaskCount > 0 && reflectionStatus === "completed" ? <Button size="sm" variant="primary" onPress={onCreatePlan} isDisabled={Boolean(processingStage)} className="bg-[#5b42ff] text-white">プランを作る</Button> : null}
+              <div><h2 className="text-sm font-bold">{t("追加済みの明日の予定", "Tomorrow's saved plans")}</h2><p className="mt-1 text-xs text-[#68708f]">{tomorrowTaskCount}件</p></div>
+              {tomorrowTaskCount > 0 && reflectionStatus === "completed" ? <Button size="sm" variant="primary" onPress={onCreatePlan} isDisabled={Boolean(processingStage)} className="bg-[#5b42ff] text-white">{t("プランを作る", "Create plan")}</Button> : null}
             </div>
             {scheduleEntries.length ? (
               <div className="mt-3 divide-y divide-[#eceef3] border-y border-[#eceef3]">
@@ -353,12 +408,12 @@ export function CheckInView(props: CheckInViewProps) {
                         <div className="flex flex-wrap gap-1.5">{tasks.map((task) => <span key={task.id} className="rounded-md bg-[#f2f8f6] px-2 py-1 text-xs font-semibold text-[#275e52]">{task.startTime ? `${task.startTime} ` : ""}{task.title}</span>)}</div>
                         <p className="mt-2 line-clamp-2 text-[10px] leading-4 text-[#8188a1]">{entry.transcript}</p>
                       </div>
-                      <button type="button" aria-label="この予定追加を削除" title="削除" onClick={() => onRemoveSchedule(entry.id)} className="grid size-9 shrink-0 place-items-center text-[#8188a1] active:scale-95"><Trash2 size={16} /></button>
+                      <button type="button" aria-label={t("この予定追加を削除", "Delete this plan entry")} title={t("削除", "Delete")} onClick={() => onRemoveSchedule(entry.id)} className="grid size-9 shrink-0 place-items-center text-[#8188a1] active:scale-95"><Trash2 size={16} /></button>
                     </div>
                   );
                 })}
               </div>
-            ) : <p className="mt-3 rounded-md bg-[#f7f8fc] px-3 py-4 text-center text-xs text-[#68708f]">明日の予定はまだありません。</p>}
+            ) : <p className="mt-3 rounded-md bg-[#f7f8fc] px-3 py-4 text-center text-xs text-[#68708f]">{t("明日の予定はまだありません。", "No plans for tomorrow yet.")}</p>}
             {tomorrowTaskCount > 0 && reflectionStatus !== "completed" ? <p className="mt-3 text-xs leading-5 text-[#68708f]">予定は保存されています。今日の振り返り完了後に、負荷に合わせたプランを作成できます。</p> : null}
           </section>
         ) : null}
@@ -369,16 +424,16 @@ export function CheckInView(props: CheckInViewProps) {
           <div className="mx-auto flex min-h-dvh w-full max-w-md flex-col bg-white px-5 pb-[calc(24px+env(safe-area-inset-bottom))] pt-[env(safe-area-inset-top)] shadow-[0_0_36px_rgba(28,35,70,0.08)]">
             <header className="grid h-16 grid-cols-[44px_1fr_44px] items-center">
               <button type="button" aria-label={assessmentIndex === 0 ? "自己評価を閉じる" : "前の質問に戻る"} onClick={() => { if (processingStage) return; if (assessmentIndex === 0) setAssessmentOpen(false); else setAssessmentIndex((current) => current - 1); }} className="grid size-11 place-items-center text-[#303857] disabled:opacity-40" disabled={Boolean(processingStage)}><ArrowLeft size={21} /></button>
-              <p className="text-center text-sm font-bold text-[#303857]">今日の負荷を確認</p>
+              <p className="text-center text-sm font-bold text-[#303857]">{t("今日の負荷を確認", "Check today's load")}</p>
             </header>
 
-            <div className="mt-3 flex gap-1.5" aria-hidden="true">{assessmentQuestions.map((question, index) => <span key={question.key} className="h-1.5 flex-1 overflow-hidden rounded-full bg-[#e8eaf2]"><span className={`block h-full rounded-full bg-[#5b42ff] transition-transform duration-200 ${index <= assessmentIndex ? "translate-x-0" : "-translate-x-full"}`} /></span>)}</div>
+            <div className="mt-3 flex gap-1.5" aria-hidden="true">{localizedAssessmentQuestions.map((question, index) => <span key={question.key} className="h-1.5 flex-1 overflow-hidden rounded-full bg-[#e8eaf2]"><span className={`block h-full rounded-full bg-[#5b42ff] transition-transform duration-200 ${index <= assessmentIndex ? "translate-x-0" : "-translate-x-full"}`} /></span>)}</div>
 
             {processingStage ? (
-              <div className="flex flex-1 flex-col items-center justify-center py-16 text-center"><span className="grid size-20 place-items-center rounded-full bg-[#efedff] text-[#5b42ff]"><LoaderCircle size={34} className="animate-spin" /></span><h2 className="mt-6 text-xl font-bold text-[#111735]">回答をもとに解析中</h2><p className="mt-2 text-sm text-[#68708f]">{processingStage}</p></div>
+              <div className="flex flex-1 flex-col items-center justify-center py-16 text-center"><span className="grid size-20 place-items-center rounded-full bg-[#efedff] text-[#5b42ff]"><LoaderCircle size={34} className="animate-spin" /></span><h2 className="mt-6 text-xl font-bold text-[#111735]">{t("回答をもとに解析中", "Analyzing your answers")}</h2><p className="mt-2 text-sm text-[#68708f]">{processingStage}</p></div>
             ) : (
               <main className="flex flex-1 flex-col py-7">
-                <div className="flex items-center justify-between gap-3"><p className="text-xs font-bold text-[#5b42ff]">{assessmentQuestion.eyebrow}</p><p className="text-xs font-bold tabular-nums text-[#7b829c]">{assessmentIndex + 1} / {assessmentQuestions.length}</p></div>
+                <div className="flex items-center justify-between gap-3"><p className="text-xs font-bold text-[#5b42ff]">{assessmentQuestion.eyebrow}</p><p className="text-xs font-bold tabular-nums text-[#7b829c]">{assessmentIndex + 1} / {localizedAssessmentQuestions.length}</p></div>
                 <h1 className="mt-5 text-[24px] font-bold leading-9 text-[#111735]">{assessmentQuestion.question}</h1>
                 <div className={`mt-8 grid ${assessmentQuestion.key === "sleepiness" ? "gap-1.5 pb-2" : "my-auto gap-2.5"}`} role="group" aria-label={assessmentQuestion.question}>
                   {assessmentQuestion.options.map((option) => {

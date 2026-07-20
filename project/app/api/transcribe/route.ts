@@ -1,5 +1,6 @@
 import { Buffer } from "node:buffer";
 
+import { getAuthErrorResponse } from "@/lib/auth-api";
 import {
   getCloudflareTranscriptionFallbackModel,
   getCloudflareTranscriptionModel,
@@ -211,27 +212,43 @@ function formatTranscript(transcript: string) {
     .replace(/\s+/g, " ")
     .trim();
 }
-function noSpeechResponse(context: FormDataEntryValue | null) {
+function noSpeechResponse(
+  context: FormDataEntryValue | null,
+  isEnglish: boolean,
+) {
   const recordingLabel =
     context === "reflection"
-      ? "今日の振り返り"
+      ? isEnglish
+        ? "today's reflection"
+        : "今日の振り返り"
       : context === "planning"
-        ? "明日の予定・タスク"
-        : "録音";
+        ? isEnglish
+          ? "tomorrow's plans and tasks"
+          : "明日の予定・タスク"
+        : isEnglish
+          ? "recording"
+          : "録音";
   return Response.json(
     {
-      error: `${recordingLabel}の音声を認識できませんでした。マイク音量を確認し、もう一度録音してください。`,
+      error: isEnglish
+        ? "Could not recognize speech in " + recordingLabel + ". Check the microphone level and record again."
+        : recordingLabel + "の音声を認識できませんでした。マイク音量を確認し、もう一度録音してください。",
       code: "NO_SPEECH_DETECTED",
     },
     { status: 422 },
   );
 }
-
-async function transcribeWithWhisper(model: string, audioBase64: string) {
+async function transcribeWithWhisper(
+  model: string,
+  audioBase64: string,
+  language: "ja" | "en",
+  initialPrompt: string,
+) {
   const result = await runCloudflareModel(model, {
     audio: audioBase64,
     task: "transcribe",
-    language: "ja",
+    language,
+    initial_prompt: initialPrompt,
     vad_filter: true,
     beam_size: 10,
     condition_on_previous_text: false,
@@ -254,13 +271,14 @@ async function transcribeWithNova(
   model: string,
   audioBuffer: ArrayBuffer,
   contentType: string,
+  language: "ja" | "en",
 ) {
   const result = await runCloudflareAudioModel(
     model,
     audioBuffer,
     contentType,
     {
-      language: "ja",
+      language,
       smart_format: true,
       punctuate: true,
       filler_words: true,
@@ -280,29 +298,51 @@ async function transcribeWithNova(
 
 export async function POST(request: Request) {
   try {
+    const authError = await getAuthErrorResponse(request);
+    if (authError) return authError;
+
     const formData = await request.formData();
     const audio = formData.get("audio");
     const context = formData.get("context");
+    const isEnglish = formData.get("locale") === "us-en";
+    const language = isEnglish ? "en" : "ja";
     const durationSec = optionalFormNumber(formData.get("durationSec"));
     const averageVolume = optionalFormNumber(formData.get("averageVolume"));
     const silenceRatio = optionalFormNumber(formData.get("silenceRatio"));
 
     if (!(audio instanceof File) || audio.size === 0) {
       return Response.json(
-        { error: "音声ファイルが必要です。", code: "AUDIO_REQUIRED" },
+        {
+          error: isEnglish
+            ? "An audio file is required."
+            : "音声ファイルが必要です。",
+          code: "AUDIO_REQUIRED",
+        },
         { status: 400 },
       );
     }
 
     if (audio.size > MAX_AUDIO_BYTES) {
       return Response.json(
-        { error: "音声ファイルは4MB以下にしてください。", code: "AUDIO_TOO_LARGE" },
+        {
+          error: isEnglish
+            ? "Audio files must be 4 MB or smaller."
+            : "音声ファイルは4MB以下にしてください。",
+          code: "AUDIO_TOO_LARGE",
+        },
         { status: 413 },
       );
     }
 
     const primaryModel = getCloudflareTranscriptionModel();
     const fallbackModel = getCloudflareTranscriptionFallbackModel();
+    const initialPrompt = isEnglish
+      ? context === "reflection"
+        ? "This is a reflection on today: completed work, feelings, energy, and concerns. Preserve the speaker's meaning and transcribe names and times accurately."
+        : "These are tomorrow's plans and tasks, including meetings, people, times, and deadlines. Preserve the speaker's meaning and transcribe names and times accurately."
+      : context === "reflection"
+        ? "今日の振り返りです。今日やったこと、終えたこと、気持ち、疲れ、悩みを話します。意味を補いすぎず、人名や時刻を正確に文字起こししてください。"
+        : "明日の予定とタスクです。会議名、人名、時刻、期限、やることを話します。意味を補いすぎず、人名や時刻を正確に文字起こししてください。";
     const audioBuffer = await audio.arrayBuffer();
     const audioBase64 = Buffer.from(audioBuffer).toString("base64");
     const candidates: TranscriptionCandidate[] = [];
@@ -314,8 +354,14 @@ export async function POST(request: Request) {
             primaryModel,
             audioBuffer,
             audio.type || "application/octet-stream",
+            language,
           )
-        : await transcribeWithWhisper(primaryModel, audioBase64);
+        : await transcribeWithWhisper(
+            primaryModel,
+            audioBase64,
+            language,
+            initialPrompt,
+          );
       candidates.push(primary);
     } catch (error) {
       primaryError = error;
@@ -326,7 +372,12 @@ export async function POST(request: Request) {
     if (fallbackModel !== primaryModel) {
       try {
         candidates.push(
-          await transcribeWithWhisper(fallbackModel, audioBase64),
+          await transcribeWithWhisper(
+            fallbackModel,
+            audioBase64,
+            language,
+            initialPrompt,
+          ),
         );
       } catch (fallbackError) {
         if (!primaryCandidate) throw primaryError ?? fallbackError;
@@ -357,7 +408,7 @@ export async function POST(request: Request) {
 
     if (!accepted) {
       if (primaryError && candidates.length === 0) throw primaryError;
-      return noSpeechResponse(context);
+      return noSpeechResponse(context, isEnglish);
     }
 
     const transcript = formatTranscript(accepted.transcript);

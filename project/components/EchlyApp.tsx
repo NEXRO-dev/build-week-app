@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 
 import { AnalysisView } from "@/components/analysis/AnalysisView";
 import { ApprovalView } from "@/components/approval/ApprovalView";
+import { SignInView } from "@/components/auth/SignInView";
 import {
   CheckInView,
   type CheckInMode,
@@ -31,6 +32,8 @@ import {
   calculateLoadSignal,
   isCompleteWorkloadSelfReport,
 } from "@/lib/load/calculateLoadSignal";
+import { authClient } from "@/lib/auth-client";
+import { useI18n } from "@/lib/i18n";
 import { applySpokenTimesToPlan } from "@/lib/plan/applySpokenTimes";
 import { isTomorrowActionableTask } from "@/lib/tasks/temporal";
 import { normalizeExtractedTaskTimes } from "@/lib/tasks/time";
@@ -82,10 +85,27 @@ function canUseDemoFallback(error: unknown) {
   );
 }
 
-async function parseApiResponse<T>(response: Response): Promise<T> {
+async function parseApiResponse<T>(
+  response: Response,
+  isEnglish = false,
+): Promise<T> {
   const data = (await response.json()) as T & { error?: string; code?: string };
   if (!response.ok) {
-    throw new ApiClientError(data.error ?? "処理に失敗しました。", data.code);
+    const englishErrors: Record<string, string> = {
+      UNAUTHORIZED: "Please sign in to continue.",
+      AUDIO_REQUIRED: "An audio file is required.",
+      AUDIO_TOO_LARGE: "Audio files must be 4 MB or smaller.",
+      NO_SPEECH_DETECTED: "No speech was recognized. Check the microphone level and record again.",
+      CLOUDFLARE_CONFIG_MISSING: "AI processing is not configured yet.",
+      CLOUDFLARE_AUTH_FAILED: "The AI service credentials could not be verified.",
+      CLOUDFLARE_LIMIT_REACHED: "The AI usage limit has been reached. Please try again later.",
+      CLOUDFLARE_INVALID_RESPONSE: "The AI response could not be validated. Please try again.",
+      CLOUDFLARE_REQUEST_FAILED: "AI processing could not be completed. Please try again later.",
+    };
+    const message = isEnglish
+      ? englishErrors[data.code ?? ""] ?? "Something went wrong. Please try again."
+      : data.error ?? "処理に失敗しました。";
+    throw new ApiClientError(message, data.code);
   }
   return data;
 }
@@ -152,6 +172,8 @@ type EchlyAppProps = {
 };
 
 export function EchlyApp({ todayLabel: serverTodayLabel }: EchlyAppProps) {
+  const { isEnglish, t } = useI18n();
+  const { data: session, isPending: isSessionPending } = authClient.useSession();
   const [view, setView] = useState<WorkspaceView>("checkin");
   const [transcriptByMode, setTranscriptByMode] = useState<Record<CheckInMode, string>>({
     reflection: "",
@@ -176,6 +198,7 @@ export function EchlyApp({ todayLabel: serverTodayLabel }: EchlyAppProps) {
   const [storageLoaded, setStorageLoaded] = useState(false);
   const [zonedNow, setZonedNow] = useState<ZonedNow | null>(null);
   const [saveTranscript, setSaveTranscript] = useState(true);
+  const [tabsPreloaded, setTabsPreloaded] = useState(false);
 
   useEffect(() => {
     const timeZone = resolveBrowserTimeZone();
@@ -217,6 +240,28 @@ export function EchlyApp({ todayLabel: serverTodayLabel }: EchlyAppProps) {
   useEffect(() => {
     window.scrollTo({ top: 0, behavior: "auto" });
   }, [view]);
+
+  useEffect(() => {
+    if (!session || tabsPreloaded) return;
+    const idleWindow = window as Window & {
+      requestIdleCallback?: (
+        callback: () => void,
+        options?: { timeout: number },
+      ) => number;
+      cancelIdleCallback?: (id: number) => void;
+    };
+
+    if (idleWindow.requestIdleCallback) {
+      const idleId = idleWindow.requestIdleCallback(
+        () => setTabsPreloaded(true),
+        { timeout: 800 },
+      );
+      return () => idleWindow.cancelIdleCallback?.(idleId);
+    }
+
+    const timeoutId = window.setTimeout(() => setTabsPreloaded(true), 250);
+    return () => window.clearTimeout(timeoutId);
+  }, [session, tabsPreloaded]);
 
   const localDate = zonedNow?.dateKey ?? null;
   const tomorrowDate = localDate ? nextDateKey(localDate) : null;
@@ -288,6 +333,17 @@ export function EchlyApp({ todayLabel: serverTodayLabel }: EchlyAppProps) {
     return plan.move.length + plan.reschedule.length + plan.restBlocks.length + plan.emailDrafts.length;
   }, [plan]);
 
+  if (isSessionPending) {
+    return (
+      <main className="grid min-h-dvh place-items-center bg-[#f7f8fc] text-sm text-[#68708f]">
+        {t("ログイン状態を確認しています...", "Checking your session...")}
+      </main>
+    );
+  }
+
+  if (!session) return <SignInView />;
+  const signedInUser = session.user;
+
   function persistHistory(update: (current: CheckIn[]) => CheckIn[]) {
     setHistory((current) => {
       const next = update(current);
@@ -333,6 +389,7 @@ export function EchlyApp({ todayLabel: serverTodayLabel }: EchlyAppProps) {
     const extension = audioBlob.type.includes("mp4") ? "m4a" : "webm";
     formData.append("audio", audioBlob, `echly-${mode}.${extension}`);
     formData.append("context", mode);
+    formData.append("locale", isEnglish ? "us-en" : "jp-ja");
     formData.append("durationSec", String(meta.durationSec));
     if (meta.averageVolume !== null) formData.append("averageVolume", String(meta.averageVolume));
     if (meta.silenceRatio !== null) formData.append("silenceRatio", String(meta.silenceRatio));
@@ -345,7 +402,7 @@ export function EchlyApp({ todayLabel: serverTodayLabel }: EchlyAppProps) {
       quality: TranscriptReview["quality"];
       requiresConfirmation: true;
       alternatives: TranscriptReview["alternatives"];
-    }>(response);
+    }>(response, isEnglish);
   }
 
   async function resolveModeTranscript(
@@ -473,6 +530,7 @@ export function EchlyApp({ todayLabel: serverTodayLabel }: EchlyAppProps) {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
+            locale: isEnglish ? "us-en" : "jp-ja",
             transcript: resolvedTranscript,
             selfReport: completedReport,
             audioBaseline,
@@ -481,7 +539,7 @@ export function EchlyApp({ todayLabel: serverTodayLabel }: EchlyAppProps) {
             timeZone: zonedNow.timeZone,
           }),
         });
-        result = await parseApiResponse<AnalysisResult>(response);
+        result = await parseApiResponse<AnalysisResult>(response, isEnglish);
       } catch (caught) {
         if (!canUseDemoFallback(caught)) throw caught;
         const demo = createDemoAnalysis(resolvedTranscript);
@@ -503,7 +561,7 @@ export function EchlyApp({ todayLabel: serverTodayLabel }: EchlyAppProps) {
         timeZone: zonedNow.timeZone,
         transcript: saveTranscript
           ? resolvedTranscript
-          : "文字起こしは保存しない設定です。",
+          : t("文字起こしは保存しない設定です。", "Transcript storage is turned off."),
         audioMeta: resolvedAudioMeta,
         condition: result.condition,
         tasks: result.tasks,
@@ -572,6 +630,7 @@ export function EchlyApp({ todayLabel: serverTodayLabel }: EchlyAppProps) {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
+            locale: isEnglish ? "us-en" : "jp-ja",
             transcript: resolvedTranscript,
             referenceDate: new Date().toISOString(),
             timeZone: zonedNow.timeZone,
@@ -673,23 +732,24 @@ export function EchlyApp({ todayLabel: serverTodayLabel }: EchlyAppProps) {
       let nextPlan: TomorrowPlan;
       if (activeSource === "demo") {
         await new Promise((resolve) => window.setTimeout(resolve, 450));
-        nextPlan = createDemoPlan(planTasks, activeAnalysis.condition);
+        nextPlan = createDemoPlan(planTasks, activeAnalysis.condition, isEnglish);
       } else {
         const response = await fetch("/api/plan", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
+            locale: isEnglish ? "us-en" : "jp-ja",
             tasks: planTasks,
             condition: activeAnalysis.condition,
             calendarEvents: mockCalendarEvents,
           }),
         });
         try {
-          const data = await parseApiResponse<{ plan: TomorrowPlan }>(response);
+          const data = await parseApiResponse<{ plan: TomorrowPlan }>(response, isEnglish);
           nextPlan = data.plan;
         } catch (caught) {
           if (!canUseDemoFallback(caught)) throw caught;
-          nextPlan = createDemoPlan(planTasks, activeAnalysis.condition);
+          nextPlan = createDemoPlan(planTasks, activeAnalysis.condition, isEnglish);
           setSource("demo");
         }
       }
@@ -748,59 +808,75 @@ export function EchlyApp({ todayLabel: serverTodayLabel }: EchlyAppProps) {
     setView("checkin");
   }
 
-  let content;
-  if (view === "analysis") {
-    content = activeAnalysis ? (
-      <AnalysisView
-        transcript={activeTranscript}
-        audioBlob={analysis ? audioByMode.reflection.blob : null}
-        audioMeta={activeAudioMeta}
-        tasks={uniqueTasks([...activeAnalysis.tasks, ...scheduledTasks])}
-        condition={activeAnalysis.condition}
-        source={activeSource}
-        onBack={() => setView("checkin")}
-        onCreatePlan={handleCreatePlan}
-        processingStage={processingStage}
-        error={error}
-      />
-    ) : (
-      <EmptyWorkspaceView type="analysis" onCheckIn={() => setView("checkin")} />
-    );
-  } else if (view === "plan") {
-    content = plan ? (
-      <PlanView
-        plan={plan}
-        onPlanChange={setPlan}
-        onBack={() => setView("analysis")}
-        onApproval={() => setView("approval")}
-      />
-    ) : (
-      <EmptyWorkspaceView
-        type="plan"
-        hasAnalysis={Boolean(activeAnalysis)}
-        onCheckIn={() => setView("checkin")}
-        onShowAnalysis={() => setView("analysis")}
-      />
-    );
-  } else if (view === "approval" && plan) {
-    content = (
-      <ApprovalView
-        plan={plan}
-        appliedActionIds={appliedActionIds}
-        onPlanChange={setPlan}
-        onApply={handleApply}
-        onBack={() => setView("plan")}
-      />
-    );
-  } else if (view === "history") {
-    content = <HistoryView checkIns={history} onNewCheckIn={startNewCheckIn} />;
-  } else if (view === "settings") {
-    content = <SettingsView saveTranscript={saveTranscript} onSaveTranscriptChange={setSaveTranscript} />;
-  } else {
-    content = (
+  function renderView(targetView: WorkspaceView) {
+    if (targetView === "analysis") {
+      return activeAnalysis ? (
+        <AnalysisView
+          transcript={activeTranscript}
+          audioBlob={analysis ? audioByMode.reflection.blob : null}
+          audioMeta={activeAudioMeta}
+          tasks={uniqueTasks([...activeAnalysis.tasks, ...scheduledTasks])}
+          condition={activeAnalysis.condition}
+          source={activeSource}
+          onBack={() => setView("checkin")}
+          onCreatePlan={handleCreatePlan}
+          processingStage={processingStage}
+          error={error}
+        />
+      ) : (
+        <EmptyWorkspaceView type="analysis" onCheckIn={() => setView("checkin")} />
+      );
+    }
+
+    if (targetView === "plan") {
+      return plan ? (
+        <PlanView
+          plan={plan}
+          onPlanChange={setPlan}
+          onBack={() => setView("analysis")}
+          onApproval={() => setView("approval")}
+        />
+      ) : (
+        <EmptyWorkspaceView
+          type="plan"
+          hasAnalysis={Boolean(activeAnalysis)}
+          onCheckIn={() => setView("checkin")}
+          onShowAnalysis={() => setView("analysis")}
+        />
+      );
+    }
+
+    if (targetView === "approval" && plan) {
+      return (
+        <ApprovalView
+          plan={plan}
+          appliedActionIds={appliedActionIds}
+          onPlanChange={setPlan}
+          onApply={handleApply}
+          onBack={() => setView("plan")}
+        />
+      );
+    }
+
+    if (targetView === "history") {
+      return <HistoryView checkIns={history} onNewCheckIn={startNewCheckIn} />;
+    }
+
+    if (targetView === "settings") {
+      return (
+        <SettingsView
+          user={{ name: signedInUser.name, email: signedInUser.email }}
+          saveTranscript={saveTranscript}
+          onSaveTranscriptChange={setSaveTranscript}
+        />
+      );
+    }
+
+    return (
       <CheckInView
+        userName={signedInUser.name}
         todayLabel={zonedNow?.label ?? serverTodayLabel}
-        timeZone={zonedNow?.timeZone ?? "タイムゾーンを確認中"}
+        timeZone={zonedNow?.timeZone ?? t("タイムゾーンを確認中", "Checking time zone")}
         previousCondition={activeAnalysis?.condition ?? history.find(hasMeasuredCondition)?.condition ?? null}
         reflectionStatus={reflectionStatus}
         reflectionCompletedAt={reflectionCompletedAt}
@@ -834,9 +910,29 @@ export function EchlyApp({ todayLabel: serverTodayLabel }: EchlyAppProps) {
     );
   }
 
+  const primaryViews = [
+    "checkin",
+    "analysis",
+    "plan",
+    "history",
+    "settings",
+  ] as const;
+  const viewsToMount = tabsPreloaded
+    ? primaryViews
+    : primaryViews.filter((targetView) => targetView === view);
+
   return (
     <AppShell view={view} onViewChange={setView}>
-      {content}
+      {viewsToMount.map((targetView) => (
+        <div
+          key={targetView}
+          hidden={view !== targetView}
+          aria-hidden={view !== targetView}
+        >
+          {renderView(targetView)}
+        </div>
+      ))}
+      {view === "approval" ? renderView("approval") : null}
     </AppShell>
   );
 }

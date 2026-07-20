@@ -1,4 +1,20 @@
 @import "tailwindcss";
+
+@media (prefers-reduced-transparency: reduce) {
+  .glass-tab-bar {
+    background: #ffffff;
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+    border-color: #dfe2ec;
+  }
+}
+
+@media (prefers-contrast: more) {
+  .glass-tab-bar {
+    background: rgba(255, 255, 255, 0.96);
+    border-color: #8a91aa;
+  }
+}
 @import "@heroui/styles";
 
 :root {
