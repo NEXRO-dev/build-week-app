@@ -64,6 +64,21 @@ export const HistoryTranscriptEntrySchema = z.object({
   tasks: z.array(PersistedExtractedTaskSchema).max(100),
 });
 
+export const PlanRecordSchema = z.object({
+  targetDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  createdAt: z.string().datetime(),
+  updatedAt: z.string().datetime(),
+  plan: PersistedTomorrowPlanSchema,
+  approvalStatus: z.enum([
+    "draft",
+    "approved",
+    "partially_approved",
+    "rejected",
+  ]),
+  approvedActionIds: z.array(z.string().max(200)).max(200),
+  generationSource: z.enum(["cloudflare", "fallback"]),
+});
+
 export const WorkspacePreferencesSchema = z.object({
   saveTranscript: z.boolean(),
 });
@@ -78,6 +93,14 @@ export const ScheduleEntryWriteSchema = z.object({
 
 export const ScheduleEntryDeleteSchema = z.object({
   id: z.string().min(1).max(200),
+});
+
+export const PlanRecordWriteSchema = z.object({
+  planRecord: PlanRecordSchema,
+});
+
+export const PlanRecordDeleteSchema = z.object({
+  targetDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
 });
 
 export const WorkspaceImportSchema = z.object({

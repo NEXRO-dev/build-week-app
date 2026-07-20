@@ -13,6 +13,7 @@ import {
 import { HistoryView } from "@/components/history/HistoryView";
 import { AppShell } from "@/components/layout/AppShell";
 import { EmptyWorkspaceView } from "@/components/layout/EmptyWorkspaceView";
+import { PlanEmptyView } from "@/components/plan/PlanEmptyView";
 import { PlanView } from "@/components/plan/PlanView";
 import { SettingsView } from "@/components/settings/SettingsView";
 import {
@@ -22,11 +23,7 @@ import {
   resolveBrowserTimeZone,
   type ZonedNow,
 } from "@/lib/date/localTime";
-import { mockCalendarEvents } from "@/lib/demo/mockCalendar";
-import {
-  createDemoAnalysis,
-  createDemoPlan,
-} from "@/lib/demo/sampleCheckIns";
+import { createDemoAnalysis } from "@/lib/demo/sampleCheckIns";
 import {
   calculateLoadSignal,
   isCompleteWorkloadSelfReport,
@@ -43,6 +40,7 @@ import type {
   ConditionSignal,
   ExtractedTask,
   HistoryTranscriptEntry,
+  PlanRecord,
   ScheduleEntry,
   TranscriptReview,
   TomorrowPlan,
@@ -72,6 +70,7 @@ type WorkspaceData = {
   history: CheckIn[];
   historyTranscripts: HistoryTranscriptEntry[];
   scheduleEntries: ScheduleEntry[];
+  plans: PlanRecord[];
   preferences: { saveTranscript: boolean };
 };
 
@@ -192,6 +191,56 @@ function emptyPlan(condition: ConditionSignal): TomorrowPlan {
   };
 }
 
+function createPlanningCondition(isEnglish: boolean): ConditionSignal {
+  const selfReport: WorkloadSelfReport = {
+    mentalDemand: 50,
+    physicalDemand: 50,
+    temporalDemand: 50,
+    performance: 50,
+    effort: 50,
+    frustration: 50,
+    sleepiness: 5,
+  };
+
+  return {
+    score: 50,
+    level: "normal",
+    label: isEnglish ? "Not assessed" : "未評価",
+    summary: isEnglish
+      ? "Today's check-in is not available, so this plan uses schedule information only."
+      : "今日の振り返りがないため、明日の予定情報だけでプランを作成します。",
+    evidence: [
+      isEnglish
+        ? "No workload self-report is available for today."
+        : "今日の負荷に関する自己評価はまだありません。",
+    ],
+    confidence: "limited",
+    components: {
+      selfReport,
+      rawTlx: 50,
+      sleepiness: 50,
+      voiceDeviation: null,
+      voiceBaselineCount: 0,
+      workloadWeight: 0,
+      sleepinessWeight: 0,
+      voiceWeight: 0,
+    },
+    methodVersion: "echly-load-v2",
+    disclaimer: isEnglish
+      ? "This is planning support, not a medical diagnosis."
+      : "これは予定調整の支援であり、医学的な診断ではありません。",
+  };
+}
+
+function hasCompletePlanningCondition(condition: ConditionSignal) {
+  return (
+    typeof condition.score === "number" &&
+    Boolean(condition.confidence) &&
+    Boolean(condition.components) &&
+    Boolean(condition.methodVersion)
+  );
+}
+
 function hasMeasuredCondition(checkIn: CheckIn) {
   return (
     checkIn.condition.methodVersion === "echly-load-v1" ||
@@ -295,6 +344,11 @@ export function EchlyApp({
   const [audioMeta, setAudioMeta] = useState<AudioMeta>(EMPTY_AUDIO_META);
   const [analysis, setAnalysis] = useState<AnalysisResult | null>(null);
   const [plan, setPlan] = useState<TomorrowPlan | null>(null);
+  const [planRecords, setPlanRecords] = useState<PlanRecord[]>([]);
+  const [planTargetDate, setPlanTargetDate] = useState<string | null>(null);
+  const [planGenerationSource, setPlanGenerationSource] = useState<
+    PlanRecord["generationSource"] | null
+  >(null);
   const [source, setSource] = useState<"cloudflare" | "demo">("demo");
   const [processingStage, setProcessingStage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -312,6 +366,7 @@ export function EchlyApp({
   const [debugTimeZone, setDebugTimeZone] = useState<string | null>(null);
   const [tabsPreloaded, setTabsPreloaded] = useState(false);
   const checkInWriteQueueRef = useRef<Promise<void>>(Promise.resolve());
+  const planWriteQueueRef = useRef<Promise<void>>(Promise.resolve());
 
   useEffect(() => {
     const timeZone = debugTimeZone ?? resolveBrowserTimeZone();
@@ -343,6 +398,10 @@ export function EchlyApp({
       setHistory([]);
       setHistoryTranscripts([]);
       setScheduleEntries([]);
+      setPlanRecords([]);
+      setPlan(null);
+      setPlanTargetDate(null);
+      setPlanGenerationSource(null);
       setStorageLoaded(false);
     }, 0);
 
@@ -463,6 +522,7 @@ export function EchlyApp({
           setHistory(mergedHistory);
           setHistoryTranscripts(mergedHistoryTranscripts);
           setScheduleEntries(mergedSchedules);
+          setPlanRecords(workspace.plans ?? []);
         }
       } catch (caught) {
         if (!cancelled) {
@@ -552,6 +612,19 @@ export function EchlyApp({
         : null),
     [analysis, todayCheckIn],
   );
+  const planningCondition =
+    (activeAnalysis && hasCompletePlanningCondition(activeAnalysis.condition)
+      ? activeAnalysis.condition
+      : history.find((item) =>
+          hasCompletePlanningCondition(item.condition),
+        )?.condition) ?? createPlanningCondition(isEnglish);
+  const activePlanRecord = useMemo(
+    () =>
+      tomorrowDate
+        ? planRecords.find((record) => record.targetDate === tomorrowDate) ?? null
+        : null,
+    [planRecords, tomorrowDate],
+  );
   const activeTranscript = analysis ? transcript : todayCheckIn?.transcript ?? "";
   const activeAudioMeta = analysis ? audioMeta : todayCheckIn?.audioMeta ?? EMPTY_AUDIO_META;
   const activeSource: "cloudflare" | "demo" = analysis
@@ -596,23 +669,54 @@ export function EchlyApp({
   }, [plan]);
 
   useEffect(() => {
-    if (analysis || plan || !todayCheckIn) return;
-    const storedPlan = todayCheckIn.plan;
-    const hasStoredPlan =
-      storedPlan.keep.length > 0 ||
-      storedPlan.move.length > 0 ||
-      storedPlan.reschedule.length > 0 ||
-      storedPlan.restBlocks.length > 0 ||
-      storedPlan.emailDrafts.length > 0 ||
-      storedPlan.rationale.length > 0;
-    if (!hasStoredPlan) return;
+    if (!storageLoaded || !tomorrowDate) return;
+    if (plan && planTargetDate === tomorrowDate) return;
 
-    const restoreId = window.setTimeout(() => {
-      setPlan(storedPlan);
-      setAppliedActionIds(todayCheckIn.approvedActionIds);
+    if (activePlanRecord) {
+      const restoreId = window.setTimeout(() => {
+        setPlan(activePlanRecord.plan);
+        setPlanTargetDate(tomorrowDate);
+        setPlanGenerationSource(activePlanRecord.generationSource);
+        setAppliedActionIds(activePlanRecord.approvedActionIds);
+      }, 0);
+      return () => window.clearTimeout(restoreId);
+    }
+
+    if (todayCheckIn) {
+      const storedPlan = todayCheckIn.plan;
+      const hasStoredPlan =
+        storedPlan.keep.length > 0 ||
+        storedPlan.move.length > 0 ||
+        storedPlan.reschedule.length > 0 ||
+        storedPlan.restBlocks.length > 0 ||
+        storedPlan.emailDrafts.length > 0 ||
+        storedPlan.rationale.length > 0;
+      if (hasStoredPlan) {
+        const restoreId = window.setTimeout(() => {
+          setPlan(storedPlan);
+          setPlanTargetDate(tomorrowDate);
+          setPlanGenerationSource("fallback");
+          setAppliedActionIds(todayCheckIn.approvedActionIds);
+        }, 0);
+        return () => window.clearTimeout(restoreId);
+      }
+    }
+
+    const clearId = window.setTimeout(() => {
+      setPlan(null);
+      setPlanTargetDate(tomorrowDate);
+      setPlanGenerationSource(null);
+      setAppliedActionIds([]);
     }, 0);
-    return () => window.clearTimeout(restoreId);
-  }, [analysis, plan, todayCheckIn]);
+    return () => window.clearTimeout(clearId);
+  }, [
+    activePlanRecord,
+    plan,
+    planTargetDate,
+    storageLoaded,
+    todayCheckIn,
+    tomorrowDate,
+  ]);
 
   if (isSessionPending) {
     return (
@@ -690,6 +794,39 @@ export function EchlyApp({
       .then(() => saveCheckInRecord(checkIn));
     checkInWriteQueueRef.current = operation;
     return operation;
+  }
+
+  function replacePlanRecord(planRecord: PlanRecord) {
+    setPlanRecords((current) => [
+      planRecord,
+      ...current.filter((item) => item.targetDate !== planRecord.targetDate),
+    ].slice(0, 30));
+  }
+
+  async function savePlanRecord(planRecord: PlanRecord) {
+    const response = await fetch("/api/workspace/plans", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ planRecord }),
+    });
+    await parseApiResponse(response, isEnglish);
+  }
+
+  function queuePlanRecord(planRecord: PlanRecord) {
+    const operation = planWriteQueueRef.current
+      .catch(() => undefined)
+      .then(() => savePlanRecord(planRecord));
+    planWriteQueueRef.current = operation;
+    return operation;
+  }
+
+  async function removePlanRecord(targetDate: string) {
+    const response = await fetch("/api/workspace/plans", {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ targetDate }),
+    });
+    await parseApiResponse(response, isEnglish);
   }
 
   async function saveScheduleEntry(scheduleEntry: ScheduleEntry) {
@@ -1194,8 +1331,38 @@ export function EchlyApp({
     setProcessingStage(null);
   }
 
-  async function persistPlan(nextPlan: TomorrowPlan) {
+  async function persistPlan(
+    nextPlan: TomorrowPlan,
+    generationSource: PlanRecord["generationSource"] =
+      planGenerationSource ?? activePlanRecord?.generationSource ?? "fallback",
+  ) {
+    if (!tomorrowDate) {
+      throw new ApiClientError(
+        isEnglish
+          ? "The device time zone is still being checked."
+          : "端末のタイムゾーンを確認中です。",
+        "TIME_ZONE_REQUIRED",
+      );
+    }
+
+    const now = new Date().toISOString();
+    const planRecord: PlanRecord = {
+      targetDate: tomorrowDate,
+      createdAt: activePlanRecord?.createdAt ?? now,
+      updatedAt: now,
+      plan: nextPlan,
+      approvalStatus: "draft",
+      approvedActionIds: [],
+      generationSource,
+    };
+
     setPlan(nextPlan);
+    setPlanTargetDate(tomorrowDate);
+    setPlanGenerationSource(generationSource);
+    setAppliedActionIds([]);
+    await queuePlanRecord(planRecord);
+    replacePlanRecord(planRecord);
+
     const currentRecord = localDate
       ? history.find((item) => item.localDate === localDate)
       : undefined;
@@ -1204,6 +1371,8 @@ export function EchlyApp({
     const updated: CheckIn = {
       ...currentRecord,
       plan: nextPlan,
+      approvalStatus: "draft",
+      approvedActionIds: [],
     };
     await queueCheckInRecord(updated);
     replaceCheckInRecord(updated);
@@ -1223,6 +1392,17 @@ export function EchlyApp({
 
   async function clearStoredPlan() {
     setPlan(null);
+    setPlanTargetDate(tomorrowDate);
+    setPlanGenerationSource(null);
+    setAppliedActionIds([]);
+
+    if (tomorrowDate) {
+      setPlanRecords((current) =>
+        current.filter((record) => record.targetDate !== tomorrowDate),
+      );
+      await removePlanRecord(tomorrowDate);
+    }
+
     const currentRecord = localDate
       ? history.find((item) => item.localDate === localDate)
       : undefined;
@@ -1236,74 +1416,101 @@ export function EchlyApp({
     };
     await queueCheckInRecord(updated);
     replaceCheckInRecord(updated);
-    setAppliedActionIds([]);
   }
 
   async function handleCreatePlan() {
-    if (!activeAnalysis) {
-      setError("今日の振り返りを完了すると、負荷に合わせたプランを作成できます。");
+    if (!tomorrowDate) {
+      setError(
+        isEnglish
+          ? "The device time zone is still being checked."
+          : "端末のタイムゾーンを確認中です。少し待ってからもう一度お試しください。",
+      );
+      return;
+    }
+    if (!planTasks.length) {
+      setError(
+        isEnglish
+          ? "Add at least one plan for tomorrow first."
+          : "先に明日の予定を1件以上追加してください。",
+      );
       handleWorkspaceViewChange("checkin");
       return;
     }
+
     setError(null);
-    setProcessingStage("明日のプランを作成中...");
+    setProcessingStage(
+      isEnglish ? "Creating tomorrow's plan..." : "明日のプランを作成中...",
+    );
 
     try {
-      let nextPlan: TomorrowPlan;
-      if (activeSource === "demo") {
-        await new Promise((resolve) => window.setTimeout(resolve, 450));
-        nextPlan = createDemoPlan(planTasks, activeAnalysis.condition, isEnglish);
-      } else {
-        const response = await fetch("/api/plan", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            locale: isEnglish ? "us-en" : "jp-ja",
-            tasks: planTasks,
-            condition: activeAnalysis.condition,
-            calendarEvents: mockCalendarEvents,
-          }),
-        });
-        try {
-          const data = await parseApiResponse<{ plan: TomorrowPlan }>(response, isEnglish);
-          nextPlan = data.plan;
-        } catch (caught) {
-          if (!canUseDemoFallback(caught)) throw caught;
-          nextPlan = createDemoPlan(planTasks, activeAnalysis.condition, isEnglish);
-          setSource("demo");
-        }
-      }
-      nextPlan = applySpokenTimesToPlan(nextPlan, planTasks);
-      await persistPlan(nextPlan);
-      setAppliedActionIds([]);
+      const response = await fetch("/api/plan", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          locale: isEnglish ? "us-en" : "jp-ja",
+          tasks: planTasks.map((task) => ({
+            ...task,
+            topicType: task.topicType ?? null,
+          })),
+          condition: planningCondition,
+          calendarEvents: [],
+        }),
+      });
+      const data = await parseApiResponse<{
+        plan: TomorrowPlan;
+        generationSource: PlanRecord["generationSource"];
+      }>(response, isEnglish);
+      const nextPlan = applySpokenTimesToPlan(data.plan, planTasks);
+      await persistPlan(nextPlan, data.generationSource);
       handleWorkspaceViewChange("plan");
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "明日のプランを作成できませんでした。");
+      setError(
+        caught instanceof Error
+          ? caught.message
+          : isEnglish
+            ? "Tomorrow's plan could not be created."
+            : "明日のプランを作成できませんでした。",
+      );
     } finally {
       setProcessingStage(null);
     }
   }
 
   async function handleApply(ids: string[]) {
-    if (!activeAnalysis || !plan || !ids.length) return;
+    if (!plan || !tomorrowDate || !ids.length) return;
     const mergedIds = Array.from(new Set([...appliedActionIds, ...ids]));
-    const currentRecord = localDate
-      ? history.find((item) => item.localDate === localDate)
-      : undefined;
-    if (!currentRecord) return;
-
-    const updated: CheckIn = {
-      ...currentRecord,
+    const approvalStatus =
+      mergedIds.length >= actionCount ? "approved" : "partially_approved";
+    const now = new Date().toISOString();
+    const planRecord: PlanRecord = {
+      targetDate: tomorrowDate,
+      createdAt: activePlanRecord?.createdAt ?? now,
+      updatedAt: now,
       plan,
-      approvalStatus:
-        mergedIds.length >= actionCount ? "approved" : "partially_approved",
+      approvalStatus,
       approvedActionIds: mergedIds,
+      generationSource:
+        planGenerationSource ?? activePlanRecord?.generationSource ?? "fallback",
     };
 
     try {
-      await queueCheckInRecord(updated);
-      replaceCheckInRecord(updated);
+      await queuePlanRecord(planRecord);
+      replacePlanRecord(planRecord);
       setAppliedActionIds(mergedIds);
+
+      const currentRecord = localDate
+        ? history.find((item) => item.localDate === localDate)
+        : undefined;
+      if (currentRecord) {
+        const updated: CheckIn = {
+          ...currentRecord,
+          plan,
+          approvalStatus,
+          approvedActionIds: mergedIds,
+        };
+        await queueCheckInRecord(updated);
+        replaceCheckInRecord(updated);
+      }
     } catch (caught) {
       setError(
         caught instanceof Error
@@ -1416,16 +1623,25 @@ export function EchlyApp({
       return plan ? (
         <PlanView
           plan={plan}
+          targetDate={tomorrowDate}
+          generationSource={planGenerationSource}
+          approvalStatus={activePlanRecord?.approvalStatus ?? "draft"}
+          processingStage={processingStage}
+          error={error}
           onPlanChange={handlePlanChange}
-          onBack={() => handleWorkspaceViewChange("analysis")}
+          onBack={() => handleWorkspaceViewChange("checkin")}
+          onRegenerate={handleCreatePlan}
           onApproval={() => handleWorkspaceViewChange("approval")}
         />
       ) : (
-        <EmptyWorkspaceView
-          type="plan"
-          hasAnalysis={Boolean(activeAnalysis)}
-          onCheckIn={() => handleWorkspaceViewChange("checkin")}
-          onShowAnalysis={() => handleWorkspaceViewChange("analysis")}
+        <PlanEmptyView
+          targetDate={tomorrowDate}
+          tasks={planTasks}
+          hasTodayCondition={Boolean(activeAnalysis)}
+          processingStage={processingStage}
+          error={error}
+          onCreatePlan={handleCreatePlan}
+          onAddSchedule={() => handleWorkspaceViewChange("checkin")}
         />
       );
     }

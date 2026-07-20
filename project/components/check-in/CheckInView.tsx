@@ -491,7 +491,7 @@ export function CheckInView(props: CheckInViewProps) {
           <section className="mt-5 border-t border-[#e7e8f0] pt-5">
             <div className="flex items-center justify-between gap-3">
               <div><h2 className="text-sm font-bold">{t("追加済みの明日の予定", "Tomorrow's saved plans")}</h2><p className="mt-1 text-xs text-[#68708f]">{tomorrowTaskCount}件</p></div>
-              {tomorrowTaskCount > 0 && reflectionStatus === "completed" ? <Button size="sm" variant="primary" onPress={onCreatePlan} isDisabled={Boolean(processingStage)} className="bg-[#5b42ff] text-white">{t("プランを作る", "Create plan")}</Button> : null}
+              {tomorrowTaskCount > 0 ? <Button size="sm" variant="primary" onPress={onCreatePlan} isDisabled={Boolean(processingStage)} className="bg-[#5b42ff] text-white">{t("プランを作る", "Create plan")}</Button> : null}
             </div>
             {scheduleEntries.length ? (
               <div className="mt-3 divide-y divide-[#eceef3] border-y border-[#eceef3]">
@@ -510,7 +510,7 @@ export function CheckInView(props: CheckInViewProps) {
                 })}
               </div>
             ) : <p className="mt-3 rounded-md bg-[#f7f8fc] px-3 py-4 text-center text-xs text-[#68708f]">{t("明日の予定はまだありません。", "No plans for tomorrow yet.")}</p>}
-            {tomorrowTaskCount > 0 && reflectionStatus !== "completed" ? <p className="mt-3 text-xs leading-5 text-[#68708f]">予定は保存されています。今日の振り返り完了後に、負荷に合わせたプランを作成できます。</p> : null}
+            {tomorrowTaskCount > 0 && reflectionStatus !== "completed" ? <p className="mt-3 text-xs leading-5 text-[#68708f]">{t("今日の振り返り前でも、予定情報だけでプランを作成できます。", "You can create a plan from schedule information before today's check-in.")}</p> : null}
           </section>
         ) : null}
       </div>

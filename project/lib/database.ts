@@ -42,6 +42,13 @@ export type EchlyDatabase = {
     created_at: string;
     updated_at: string;
   };
+  echly_plans: {
+    user_id: string;
+    target_date: string;
+    created_at: string;
+    updated_at: string;
+    payload: string;
+  };
   echly_user_preferences: {
     user_id: string;
     save_transcript: number;
@@ -58,7 +65,7 @@ const databaseGlobal = globalThis as typeof globalThis & {
 // Increment whenever createEchlySchema adds or changes database objects. This
 // ensures a Next.js dev server re-runs migrations after a hot reload instead of
 // reusing a schema promise created by an older version of this module.
-const ECHLY_SCHEMA_VERSION = 2;
+const ECHLY_SCHEMA_VERSION = 3;
 
 export const database =
   databaseGlobal.echlyDatabase ??
@@ -179,6 +186,24 @@ async function createEchlySchema() {
       updated_at
     FROM echly_schedule_entries
   `.execute(database);
+
+  await database.schema
+    .createTable("echly_plans")
+    .ifNotExists()
+    .addColumn("user_id", "text", (column) => column.notNull())
+    .addColumn("target_date", "text", (column) => column.notNull())
+    .addColumn("created_at", "text", (column) => column.notNull())
+    .addColumn("updated_at", "text", (column) => column.notNull())
+    .addColumn("payload", "text", (column) => column.notNull())
+    .addPrimaryKeyConstraint("echly_plans_pk", ["user_id", "target_date"])
+    .execute();
+
+  await database.schema
+    .createIndex("echly_plans_user_date_idx")
+    .ifNotExists()
+    .on("echly_plans")
+    .columns(["user_id", "target_date"])
+    .execute();
 
   await database.schema
     .createTable("echly_user_preferences")

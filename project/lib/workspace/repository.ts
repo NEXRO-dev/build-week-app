@@ -2,9 +2,15 @@ import { database, ensureEchlySchema } from "@/lib/database";
 import {
   CheckInRecordSchema,
   HistoryTranscriptEntrySchema,
+  PlanRecordSchema,
   ScheduleEntryRecordSchema,
 } from "@/lib/workspace/schemas";
-import type { CheckIn, HistoryTranscriptEntry, ScheduleEntry } from "@/types/echly";
+import type {
+  CheckIn,
+  HistoryTranscriptEntry,
+  PlanRecord,
+  ScheduleEntry,
+} from "@/types/echly";
 
 function parseCheckIn(payload: string): CheckIn | null {
   try {
@@ -24,10 +30,25 @@ function parseScheduleEntry(payload: string): ScheduleEntry | null {
   }
 }
 
+function parsePlanRecord(payload: string): PlanRecord | null {
+  try {
+    const parsed = PlanRecordSchema.safeParse(JSON.parse(payload));
+    return parsed.success ? parsed.data : null;
+  } catch {
+    return null;
+  }
+}
+
 export async function loadWorkspace(userId: string) {
   await ensureEchlySchema();
 
-  const [checkInRows, scheduleRows, historyTranscriptRows, preferences] = await Promise.all([
+  const [
+    checkInRows,
+    scheduleRows,
+    historyTranscriptRows,
+    planRows,
+    preferences,
+  ] = await Promise.all([
     database
       .selectFrom("echly_check_ins")
       .select("payload")
@@ -56,6 +77,13 @@ export async function loadWorkspace(userId: string) {
       .where("user_id", "=", userId)
       .orderBy("created_at", "desc")
       .limit(730)
+      .execute(),
+    database
+      .selectFrom("echly_plans")
+      .select("payload")
+      .where("user_id", "=", userId)
+      .orderBy("target_date", "desc")
+      .limit(30)
       .execute(),
     database
       .selectFrom("echly_user_preferences")
@@ -89,6 +117,9 @@ export async function loadWorkspace(userId: string) {
         }
       })
       .filter((value): value is HistoryTranscriptEntry => value !== null),
+    plans: planRows
+      .map((row) => parsePlanRecord(row.payload))
+      .filter((value): value is PlanRecord => value !== null),
     preferences: {
       saveTranscript: preferences ? preferences.save_transcript === 1 : true,
     },
@@ -224,6 +255,37 @@ export async function deleteScheduleEntry(userId: string, id: string) {
     .deleteFrom("echly_schedule_entries")
     .where("user_id", "=", userId)
     .where("id", "=", id)
+    .executeTakeFirst();
+  return Number(result.numDeletedRows) > 0;
+}
+
+export async function upsertPlanRecord(userId: string, planRecord: PlanRecord) {
+  await ensureEchlySchema();
+
+  await database
+    .insertInto("echly_plans")
+    .values({
+      user_id: userId,
+      target_date: planRecord.targetDate,
+      created_at: planRecord.createdAt,
+      updated_at: planRecord.updatedAt,
+      payload: JSON.stringify(planRecord),
+    })
+    .onConflict((conflict) =>
+      conflict.columns(["user_id", "target_date"]).doUpdateSet({
+        updated_at: planRecord.updatedAt,
+        payload: JSON.stringify(planRecord),
+      }),
+    )
+    .execute();
+}
+
+export async function deletePlanRecord(userId: string, targetDate: string) {
+  await ensureEchlySchema();
+  const result = await database
+    .deleteFrom("echly_plans")
+    .where("user_id", "=", userId)
+    .where("target_date", "=", targetDate)
     .executeTakeFirst();
   return Number(result.numDeletedRows) > 0;
 }

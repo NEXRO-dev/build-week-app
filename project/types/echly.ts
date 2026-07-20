@@ -151,6 +151,16 @@ export type TomorrowPlan = {
   rationale: string[];
 };
 
+export type PlanRecord = {
+  targetDate: string;
+  createdAt: string;
+  updatedAt: string;
+  plan: TomorrowPlan;
+  approvalStatus: ApprovalStatus;
+  approvedActionIds: string[];
+  generationSource: "cloudflare" | "fallback";
+};
+
 export type CalendarEvent = {
   id: string;
   title: string;

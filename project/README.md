@@ -320,6 +320,16 @@ The app runs at `http://localhost:3000` by default. The root route uses the save
 
 ルートURLは保存済みの言語設定を優先し、未設定の場合はブラウザの `Accept-Language` から日本語または英語を選択します。
 
+## Application data in Turso
+
+Authenticated users' check-ins, transcripts (when enabled), workload answers, audio features, extracted tasks, generated plans, approvals, added schedule entries, and preferences are stored in Turso. Plans are stored by target date, so they can be created before the daily reflection and restored after a reload. The app creates these tables automatically on the first authenticated workspace request:
+
+- echly_check_ins
+- echly_schedule_entries
+- echly_history_transcripts
+- echly_plans
+- echly_user_preferences
+
 ## 10. Testing（テスト方法）
 
 ### English
