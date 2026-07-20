@@ -211,6 +211,7 @@ Prerequisites:
 git clone https://github.com/NEXRO-dev/build-week-app.git
 cd build-week-app/project
 npm ci
+cp .env.example .env.local
 ```
 
 Generate a session secret:
@@ -251,11 +252,11 @@ Use the deployed origin instead of `http://localhost:3000` in production.
 
 ### English
 
-Create `.env.local` in the project directory. Authentication and database variables are required. Cloudflare variables enable the live AI path. OpenAI client variables are optional in the current runtime. Web Push variables are required only when notifications are enabled.
+Copy the public template with `cp .env.example .env.local`, then fill in your own values. Authentication and database variables are required. Cloudflare variables enable the live AI path. OpenAI client variables are optional in the current runtime. Web Push variables are required only when notifications are enabled.
 
 ### 日本語
 
-プロジェクト直下に `.env.local` を作成してください。認証とデータベースの変数は必須です。Cloudflare変数はライブAI処理に使用します。現在の実行経路ではOpenAIクライアント変数は任意です。Web Push変数は通知を有効化する場合のみ必要です。
+`cp .env.example .env.local` で公開テンプレートをコピーし、自分の値を設定してください。認証とデータベースの変数は必須です。Cloudflare変数はライブAI処理に使用します。現在の実行経路ではOpenAIクライアント変数は任意です。Web Push変数は通知を有効化する場合のみ必要です。
 
 ```dotenv
 # Authentication / database: required
