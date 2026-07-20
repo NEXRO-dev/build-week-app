@@ -6,6 +6,7 @@ import Image from "next/image";
 import Link from "next/link";
 import { type ReactNode, useEffect, useState } from "react";
 
+import { APP_BUILD_TIME, APP_RELEASE_ID, APP_VERSION } from "@/lib/app-version";
 import { authClient } from "@/lib/auth-client";
 import { useI18n } from "@/lib/i18n";
 import {
@@ -132,6 +133,22 @@ export function SettingsView({
       minute: "2-digit",
       hour12: isEnglish,
     }).format(now);
+  }
+
+  function formattedBuildTime() {
+    if (!APP_BUILD_TIME) return t("不明", "Unknown");
+    const buildTime = new Date(APP_BUILD_TIME);
+    if (Number.isNaN(buildTime.getTime())) return t("不明", "Unknown");
+
+    return new Intl.DateTimeFormat(isEnglish ? "en-US" : "ja-JP", {
+      timeZone,
+      year: "numeric",
+      month: isEnglish ? "short" : "numeric",
+      day: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: isEnglish,
+    }).format(buildTime);
   }
 
   async function signOut() {
@@ -352,6 +369,11 @@ export function SettingsView({
             </p>
           </div>
         </section>
+
+        <footer className="border-t border-[#e3e5ef] pt-5 text-center text-[10px] leading-5 text-[#8a91aa]">
+          <p className="font-semibold text-[#68708f]">Echly v{APP_VERSION}{APP_RELEASE_ID === "local" ? "" : ` (${APP_RELEASE_ID})`}</p>
+          <p>{t("最終更新", "Last updated")}: {formattedBuildTime()} ({timeZone})</p>
+        </footer>
       </div>
     </div>
   );
