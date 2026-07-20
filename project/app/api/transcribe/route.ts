@@ -2,6 +2,13 @@ import { Buffer } from "node:buffer";
 
 import { getAuthErrorResponse } from "@/lib/auth-api";
 import {
+  isLikelySilenceHallucination,
+  isStrongNovaCandidate,
+  selectTranscriptionCandidate,
+  type TranscriptionCandidate,
+} from "@/lib/audio/transcriptionQuality";
+import {
+  CloudflareWorkersAiError,
   getCloudflareTranscriptionFallbackModel,
   getCloudflareTranscriptionModel,
   runCloudflareAudioModel,
@@ -12,13 +19,6 @@ import { cloudflareApiErrorResponse } from "@/lib/cloudflare/route-error";
 export const runtime = "nodejs";
 
 const MAX_AUDIO_BYTES = 4 * 1024 * 1024;
-
-type TranscriptionCandidate = {
-  transcript: string;
-  hallucination: boolean;
-  provider: "nova-3" | "whisper";
-  confidence: number | null;
-};
 
 function textValue(value: unknown) {
   return typeof value === "string" && value.trim() ? value.trim() : null;
@@ -98,6 +98,83 @@ function extractWhisperTranscription(result: unknown): string {
   return "";
 }
 
+type WhisperSegmentQuality = {
+  transcript: string;
+  speechProbability: number | null;
+  totalSegments: number;
+  acceptedSegments: number;
+};
+
+function extractWhisperSegmentQuality(result: unknown): WhisperSegmentQuality {
+  const queue: unknown[] = [result];
+  const visited = new Set<object>();
+
+  while (queue.length) {
+    const candidate = queue.shift();
+    if (!candidate || typeof candidate !== "object") continue;
+    if (visited.has(candidate)) continue;
+    visited.add(candidate);
+
+    const record = candidate as Record<string, unknown>;
+    if (Array.isArray(record.segments) && record.segments.length) {
+      const segments = record.segments
+        .map(recordValue)
+        .filter((segment): segment is Record<string, unknown> => Boolean(segment));
+      const accepted = segments.filter((segment) => {
+        const noSpeechProbability =
+          typeof segment.no_speech_prob === "number"
+            ? segment.no_speech_prob
+            : null;
+        const averageLogProbability =
+          typeof segment.avg_logprob === "number"
+            ? segment.avg_logprob
+            : null;
+        const likelyNoSpeech =
+          noSpeechProbability !== null &&
+          noSpeechProbability > 0.6 &&
+          averageLogProbability !== null &&
+          averageLogProbability < -1;
+        return !likelyNoSpeech;
+      });
+      const noSpeechProbabilities = segments
+        .map((segment) => segment.no_speech_prob)
+        .filter((value): value is number => typeof value === "number");
+      const averageNoSpeechProbability = noSpeechProbabilities.length
+        ? noSpeechProbabilities.reduce((sum, value) => sum + value, 0) /
+          noSpeechProbabilities.length
+        : null;
+
+      return {
+        transcript: accepted
+          .map((segment) => textValue(segment.text))
+          .filter((value): value is string => Boolean(value))
+          .join(" ")
+          .replace(/\s+/g, " ")
+          .trim(),
+        speechProbability:
+          averageNoSpeechProbability === null
+            ? null
+            : Number(
+                Math.max(0, Math.min(1, 1 - averageNoSpeechProbability)).toFixed(3),
+              ),
+        totalSegments: segments.length,
+        acceptedSegments: accepted.length,
+      };
+    }
+
+    for (const key of ["result", "data", "output", "response"]) {
+      if (record[key] !== undefined) queue.push(record[key]);
+    }
+  }
+
+  return {
+    transcript: "",
+    speechProbability: null,
+    totalSegments: 0,
+    acceptedSegments: 0,
+  };
+}
+
 function recordValue(value: unknown): Record<string, unknown> | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   return value as Record<string, unknown>;
@@ -143,64 +220,6 @@ function extractNovaTranscription(result: unknown) {
   };
 }
 
-function isLikelySilenceHallucination(transcript: string) {
-  const normalized = transcript
-    .normalize("NFKC")
-    .toLowerCase()
-    .replace(/[\s。、,.!！?？「」『』"'()[\]【】]/g, "");
-
-  return (
-    /^(ご視聴ありがとうございました)+$/.test(normalized) ||
-    /^(ご視聴ありがとうございます)+$/.test(normalized) ||
-    /^(最後までご視聴ありがとうございました)+$/.test(normalized) ||
-    /^(ご清聴ありがとうございました)+$/.test(normalized) ||
-    /^(お聞きいただきありがとうございました)+$/.test(normalized) ||
-    /チャンネル登録.*(お願い|ありがとう)/.test(normalized) ||
-    /字幕.*(提供|作成)/.test(normalized) ||
-    /^(thankyou|thanks)for(watching|listening)$/.test(normalized) ||
-    /^pleasesubscribe/.test(normalized) ||
-    /^(音楽|拍手|無音)$/.test(normalized)
-  );
-}
-
-function isUsable(candidate: TranscriptionCandidate | undefined) {
-  return Boolean(
-    candidate &&
-      candidate.transcript &&
-      !candidate.hallucination,
-  );
-}
-
-function normalizeForComparison(value: string) {
-  return value
-    .normalize("NFKC")
-    .toLowerCase()
-    .replace(/[\s。、,.!！?？「」『』"'()[\]【】]/g, "");
-}
-
-function transcriptAgreement(left: string, right: string) {
-  const a = normalizeForComparison(left);
-  const b = normalizeForComparison(right);
-  if (!a || !b) return null;
-
-  const previous = Array.from({ length: b.length + 1 }, (_, index) => index);
-  for (let row = 1; row <= a.length; row += 1) {
-    let diagonal = previous[0];
-    previous[0] = row;
-    for (let column = 1; column <= b.length; column += 1) {
-      const above = previous[column];
-      previous[column] = Math.min(
-        previous[column] + 1,
-        previous[column - 1] + 1,
-        diagonal + (a[row - 1] === b[column - 1] ? 0 : 1),
-      );
-      diagonal = above;
-    }
-  }
-
-  return Number((1 - previous[b.length] / Math.max(a.length, b.length)).toFixed(3));
-}
-
 function formatTranscript(transcript: string) {
   const japaneseOrNumber =
     "\\p{Script=Han}\\p{Script=Hiragana}\\p{Script=Katakana}\\p{N}";
@@ -217,7 +236,11 @@ function noSpeechResponse(
   isEnglish: boolean,
 ) {
   const recordingLabel =
-    context === "reflection"
+    context === "combined"
+      ? isEnglish
+        ? "today's reflection and tomorrow's plans"
+        : "今日の振り返りと明日の予定"
+      : context === "reflection"
       ? isEnglish
         ? "today's reflection"
         : "今日の振り返り"
@@ -242,30 +265,37 @@ async function transcribeWithWhisper(
   model: string,
   audioBase64: string,
   language: "ja" | "en",
-  initialPrompt: string,
-  mode: "standard" | "relaxed" = "standard",
+  mode: "filtered" | "unfiltered" = "filtered",
 ) {
-  const relaxed = mode === "relaxed";
-  const result = await runCloudflareModel(model, {
+  const filtered = mode === "filtered";
+  const input: Record<string, unknown> = {
     audio: audioBase64,
     task: "transcribe",
     language,
-    initial_prompt: initialPrompt,
-    vad_filter: !relaxed,
-    beam_size: 10,
+    vad_filter: filtered,
     condition_on_previous_text: false,
-    no_speech_threshold: relaxed ? 0.8 : 0.5,
-    compression_ratio_threshold: 2.4,
-    log_prob_threshold: relaxed ? -1.5 : -1.2,
-    hallucination_silence_threshold: relaxed ? 2 : 1.5,
-  });
-  const transcript = extractWhisperTranscription(result);
+    no_speech_threshold: filtered ? 0.6 : 0.8,
+    compression_ratio_threshold: filtered ? 2.4 : 2.8,
+    log_prob_threshold: filtered ? -1 : -1.5,
+  };
+
+  const result = await runCloudflareModel(model, input);
+  const extractedTranscript = extractWhisperTranscription(result);
+  const segmentQuality = extractWhisperSegmentQuality(result);
+  const removedUnreliableSegments =
+    segmentQuality.totalSegments > segmentQuality.acceptedSegments;
+  const transcript = removedUnreliableSegments
+    ? segmentQuality.transcript
+    : extractedTranscript;
   return {
     transcript,
     hallucination:
-      transcript !== "" && isLikelySilenceHallucination(transcript),
+      (segmentQuality.totalSegments > 0 &&
+        segmentQuality.acceptedSegments === 0) ||
+      (transcript !== "" && isLikelySilenceHallucination(transcript)),
     provider: "whisper" as const,
     confidence: null,
+    speechProbability: segmentQuality.speechProbability,
   };
 }
 
@@ -283,9 +313,7 @@ async function transcribeWithNova(
       language,
       smart_format: true,
       punctuate: true,
-      filler_words: true,
       numerals: true,
-      utterances: true,
     },
   );
   const extracted = extractNovaTranscription(result);
@@ -295,7 +323,27 @@ async function transcribeWithNova(
       extracted.transcript !== "" &&
       isLikelySilenceHallucination(extracted.transcript),
     provider: "nova-3" as const,
+    speechProbability: null,
   };
+}
+
+async function transcribeWithModel(
+  model: string,
+  audioBuffer: ArrayBuffer,
+  audioBase64: string,
+  contentType: string,
+  language: "ja" | "en",
+  whisperMode: "filtered" | "unfiltered" = "filtered",
+) {
+  return model.includes("/deepgram/nova-3")
+    ? transcribeWithNova(model, audioBuffer, contentType, language)
+    : transcribeWithWhisper(model, audioBase64, language, whisperMode);
+}
+
+function providerErrorDetails(model: string, error: unknown) {
+  return error instanceof CloudflareWorkersAiError
+    ? { model, status: error.status, code: error.code }
+    : { model, status: null, code: null };
 }
 
 export async function POST(request: Request) {
@@ -338,105 +386,91 @@ export async function POST(request: Request) {
 
     const primaryModel = getCloudflareTranscriptionModel();
     const fallbackModel = getCloudflareTranscriptionFallbackModel();
-    const initialPrompt = isEnglish
-      ? context === "reflection"
-        ? "This is a reflection on today: completed work, feelings, energy, and concerns. Preserve the speaker's meaning and transcribe names and times accurately."
-        : "These are tomorrow's plans and tasks, including meetings, people, times, and deadlines. Preserve the speaker's meaning and transcribe names and times accurately."
-      : context === "reflection"
-        ? "今日の振り返りです。今日やったこと、終えたこと、気持ち、疲れ、悩みを話します。意味を補いすぎず、人名や時刻を正確に文字起こししてください。"
-        : "明日の予定とタスクです。会議名、人名、時刻、期限、やることを話します。意味を補いすぎず、人名や時刻を正確に文字起こししてください。";
     const audioBuffer = await audio.arrayBuffer();
     const audioBase64 = Buffer.from(audioBuffer).toString("base64");
+    const contentType = audio.type || "application/octet-stream";
+    const models = [...new Set([primaryModel, fallbackModel])].sort(
+      (left, right) =>
+        Number(right.includes("/deepgram/nova-3")) -
+        Number(left.includes("/deepgram/nova-3")),
+    );
     const candidates: TranscriptionCandidate[] = [];
-    let primaryError: unknown = null;
+    const providerErrors: Array<{ model: string; error: unknown }> = [];
 
-    try {
-      const primary = primaryModel.includes("/deepgram/nova-3")
-        ? await transcribeWithNova(
-            primaryModel,
-            audioBuffer,
-            audio.type || "application/octet-stream",
-            language,
-          )
-        : await transcribeWithWhisper(
-            primaryModel,
-            audioBase64,
-            language,
-            initialPrompt,
-          );
-      candidates.push(primary);
-    } catch (error) {
-      primaryError = error;
-    }
-
-    const primaryCandidate = candidates[0];
-
-    if (fallbackModel !== primaryModel) {
+    for (const model of models) {
       try {
-        candidates.push(
-          await transcribeWithWhisper(
-            fallbackModel,
-            audioBase64,
-            language,
-            initialPrompt,
-          ),
+        const candidate = await transcribeWithModel(
+          model,
+          audioBuffer,
+          audioBase64,
+          contentType,
+          language,
         );
-      } catch (fallbackError) {
-        if (!primaryCandidate) throw primaryError ?? fallbackError;
+        candidates.push(candidate);
+        if (isStrongNovaCandidate(candidate)) break;
+      } catch (error) {
+        providerErrors.push({ model, error });
       }
     }
 
-    if (!candidates.some(isUsable)) {
-      const relaxedWhisperModel = [fallbackModel, primaryModel].find((model) =>
+    let selection = selectTranscriptionCandidate(candidates);
+
+    if (!selection.accepted) {
+      const whisperModel = models.find((model) =>
         model.includes("/whisper"),
       );
 
-      if (relaxedWhisperModel) {
+      if (whisperModel) {
         try {
           candidates.push(
             await transcribeWithWhisper(
-              relaxedWhisperModel,
+              whisperModel,
               audioBase64,
               language,
-              initialPrompt,
-              "relaxed",
+              "unfiltered",
             ),
           );
-        } catch (relaxedError) {
-          if (candidates.length === 0) throw primaryError ?? relaxedError;
+        } catch (error) {
+          providerErrors.push({ model: whisperModel, error });
         }
+        selection = selectTranscriptionCandidate(candidates);
       }
     }
 
-    const usableCandidates = candidates.filter(isUsable);
-    const novaCandidate = usableCandidates.find(
-      (candidate) => candidate.provider === "nova-3",
-    );
-    const whisperCandidate = usableCandidates.find(
-      (candidate) => candidate.provider === "whisper",
-    );
-    const agreement =
-      novaCandidate && whisperCandidate
-        ? transcriptAgreement(
-            novaCandidate.transcript,
-            whisperCandidate.transcript,
-          )
-        : null;
-    const accepted =
-      novaCandidate && whisperCandidate
-        ? normalizeForComparison(whisperCandidate.transcript).length >
-          normalizeForComparison(novaCandidate.transcript).length
-          ? whisperCandidate
-          : novaCandidate
-        : usableCandidates[0];
+    const { accepted, agreement } = selection;
 
     if (!accepted) {
-      if (primaryError && candidates.length === 0) throw primaryError;
+      const dailyLimitError = providerErrors.find(
+        ({ error }) =>
+          error instanceof CloudflareWorkersAiError && error.code === 3036,
+      );
+      if (dailyLimitError) throw dailyLimitError.error;
+      if (providerErrors.length) {
+        throw providerErrors[0].error;
+      }
+      console.warn("[transcribe:rejected]", {
+        context: typeof context === "string" ? context : "unknown",
+        audioBytes: audio.size,
+        audioType: audio.type || "unknown",
+        durationSec,
+        averageVolume,
+        silenceRatio,
+        candidates: candidates.map((candidate) => ({
+          provider: candidate.provider,
+          characters: candidate.transcript.length,
+          confidence: candidate.confidence,
+          speechProbability: candidate.speechProbability,
+          hallucination: candidate.hallucination,
+        })),
+        providerErrors: providerErrors.map(({ model, error }) =>
+          providerErrorDetails(model, error),
+        ),
+      });
       return noSpeechResponse(context, isEnglish);
     }
 
     const transcript = formatTranscript(accepted.transcript);
-    const alternatives = usableCandidates.map((candidate) => ({
+    const alternatives = selection.candidates.map((candidate) => ({
       provider: candidate.provider,
       transcript: formatTranscript(candidate.transcript),
       confidence: candidate.confidence,
@@ -456,10 +490,14 @@ export async function POST(request: Request) {
       silenceRatio,
       provider: accepted.provider,
       confidence: accepted.confidence,
-      comparedWithFallback: usableCandidates.length > 1,
+      speechProbability: accepted.speechProbability,
+      comparedWithFallback: selection.candidates.length > 1,
       agreement,
       quality,
       acceptedCharacters: transcript.length,
+      providerErrors: providerErrors.map(({ model, error }) =>
+        providerErrorDetails(model, error),
+      ),
     });
 
     return Response.json({

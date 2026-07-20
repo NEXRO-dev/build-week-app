@@ -61,10 +61,16 @@ export function getCloudflareTranscriptionModel() {
 }
 
 export function getCloudflareTranscriptionFallbackModel() {
-  return (
-    process.env.CLOUDFLARE_TRANSCRIPTION_FALLBACK_MODEL?.trim() ||
-    "@cf/openai/whisper-large-v3-turbo"
-  );
+  const configuredModel =
+    process.env.CLOUDFLARE_TRANSCRIPTION_FALLBACK_MODEL?.trim();
+
+  if (configuredModel) return configuredModel;
+
+  // Keep the automatic fallback on a different provider. This also covers an
+  // installation that overrides only the primary model in its environment.
+  return getCloudflareTranscriptionModel().includes("/deepgram/nova-3")
+    ? "@cf/openai/whisper-large-v3-turbo"
+    : "@cf/deepgram/nova-3";
 }
 
 function modelPath(model: string) {

@@ -59,6 +59,7 @@ const EMPTY_AUDIO_META: AudioMeta = {
 
 const HISTORY_STORAGE_KEY = "echly.checkins.v1";
 const SCHEDULE_STORAGE_KEY = "echly.schedule-entries.v1";
+const DEBUG_TIME_ZONE_STORAGE_KEY = "echly.debug-time-zone.v1";
 
 type ModeAudio = {
   blob: Blob | null;
@@ -167,6 +168,17 @@ function uniqueTasks(tasks: ExtractedTask[]) {
   return [...unique.values()];
 }
 
+function isValidTimeZone(value: string | null): value is string {
+  if (!value) return false;
+
+  try {
+    new Intl.DateTimeFormat("en-US", { timeZone: value }).format();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 type EchlyAppProps = {
   todayLabel: string;
 };
@@ -197,15 +209,30 @@ export function EchlyApp({ todayLabel: serverTodayLabel }: EchlyAppProps) {
   const [scheduleEntries, setScheduleEntries] = useState<ScheduleEntry[]>([]);
   const [storageLoaded, setStorageLoaded] = useState(false);
   const [zonedNow, setZonedNow] = useState<ZonedNow | null>(null);
+  const [debugTimeZone, setDebugTimeZone] = useState<string | null>(null);
   const [saveTranscript, setSaveTranscript] = useState(true);
   const [tabsPreloaded, setTabsPreloaded] = useState(false);
 
   useEffect(() => {
-    const timeZone = resolveBrowserTimeZone();
+    const timeZone = debugTimeZone ?? resolveBrowserTimeZone();
     const updateClock = () => setZonedNow(getZonedNow(new Date(), timeZone));
     updateClock();
     const intervalId = window.setInterval(updateClock, 30_000);
     return () => window.clearInterval(intervalId);
+  }, [debugTimeZone]);
+
+  useEffect(() => {
+    const timeoutId = window.setTimeout(() => {
+      try {
+        const savedTimeZone = window.localStorage.getItem(
+          DEBUG_TIME_ZONE_STORAGE_KEY,
+        );
+        if (isValidTimeZone(savedTimeZone)) setDebugTimeZone(savedTimeZone);
+      } catch {
+        // Debug settings are optional; fall back to the browser time zone.
+      }
+    }, 0);
+    return () => window.clearTimeout(timeoutId);
   }, []);
 
   useEffect(() => {
@@ -368,6 +395,24 @@ export function EchlyApp({ todayLabel: serverTodayLabel }: EchlyAppProps) {
     });
   }
 
+  function handleDebugTimeZoneChange(timeZone: string | null) {
+    const nextTimeZone = isValidTimeZone(timeZone) ? timeZone : null;
+    setDebugTimeZone(nextTimeZone);
+
+    try {
+      if (nextTimeZone) {
+        window.localStorage.setItem(
+          DEBUG_TIME_ZONE_STORAGE_KEY,
+          nextTimeZone,
+        );
+      } else {
+        window.localStorage.removeItem(DEBUG_TIME_ZONE_STORAGE_KEY);
+      }
+    } catch {
+      // The setting still applies to the current session without persistence.
+    }
+  }
+
   function handleAudioReady(mode: CheckInMode, blob: Blob, meta: AudioMeta) {
     setAudioByMode((current) => ({ ...current, [mode]: { blob, meta } }));
     setError(null);
@@ -380,15 +425,28 @@ export function EchlyApp({ todayLabel: serverTodayLabel }: EchlyAppProps) {
     }));
   }
 
+  function handleReflectionAssessmentClose() {
+    handleAudioDiscard("reflection");
+    setSelfReport({});
+    setPendingReflectionReport(null);
+    setTranscriptReview(null);
+    setRetryRecordingMode(null);
+    setError(null);
+  }
+
   async function transcribeRecording(
     mode: CheckInMode,
     audioBlob: Blob,
     meta: AudioMeta,
   ) {
     const formData = new FormData();
-    const extension = audioBlob.type.includes("mp4") ? "m4a" : "webm";
+    const extension = audioBlob.type === "audio/wav"
+      ? "wav"
+      : audioBlob.type.includes("mp4")
+        ? "m4a"
+        : "webm";
     formData.append("audio", audioBlob, `echly-${mode}.${extension}`);
-    formData.append("context", mode);
+    formData.append("context", mode === "reflection" ? "combined" : mode);
     formData.append("locale", isEnglish ? "us-en" : "jp-ja");
     formData.append("durationSec", String(meta.durationSec));
     if (meta.averageVolume !== null) formData.append("averageVolume", String(meta.averageVolume));
@@ -466,7 +524,7 @@ export function EchlyApp({ todayLabel: serverTodayLabel }: EchlyAppProps) {
 
     throw new ApiClientError(
       mode === "reflection"
-        ? "今日の振り返りを録音するか、テキストで入力してください。"
+        ? "今日の振り返りと明日の予定を録音するか、テキストで入力してください。"
         : "明日の予定を録音するか、テキストで入力してください。",
       "INPUT_REQUIRED",
     );
@@ -496,8 +554,8 @@ export function EchlyApp({ todayLabel: serverTodayLabel }: EchlyAppProps) {
     setError(null);
     setProcessingStage(
       confirmedTranscript === undefined
-        ? "今日の振り返りを文字起こし中..."
-        : "今日の負荷を解析中...",
+        ? "今日と明日の内容を文字起こし中..."
+        : "今日と明日の内容を解析中...",
     );
 
     try {
@@ -514,7 +572,7 @@ export function EchlyApp({ todayLabel: serverTodayLabel }: EchlyAppProps) {
       const audioBaseline = history
         .filter(isPersonalVoiceHistory)
         .map((item) => item.audioMeta);
-      setProcessingStage("今日の負荷を解析中...");
+      setProcessingStage("今日と明日の内容を解析中...");
 
       let result: AnalysisResult;
       let resolvedSource: "cloudflare" | "demo" = "cloudflare";
@@ -861,6 +919,10 @@ export function EchlyApp({ todayLabel: serverTodayLabel }: EchlyAppProps) {
           user={{ name: signedInUser.name, email: signedInUser.email }}
           saveTranscript={saveTranscript}
           onSaveTranscriptChange={setSaveTranscript}
+          timeZone={zonedNow?.timeZone ?? resolveBrowserTimeZone()}
+          deviceTimeZone={resolveBrowserTimeZone()}
+          debugTimeZone={debugTimeZone}
+          onDebugTimeZoneChange={handleDebugTimeZoneChange}
         />
       );
     }
@@ -891,6 +953,7 @@ export function EchlyApp({ todayLabel: serverTodayLabel }: EchlyAppProps) {
         onAudioDiscard={handleAudioDiscard}
         selfReport={selfReport}
         onSelfReportChange={(key, value) => setSelfReport((current) => ({ ...current, [key]: value }))}
+        onAssessmentClose={handleReflectionAssessmentClose}
         onAnalyzeReflection={handleAnalyzeReflection}
         onAddSchedule={handleAddSchedule}
         scheduleEntries={tomorrowEntries}

@@ -20,7 +20,7 @@ export async function POST(request: Request) {
     const extraction = await runCloudflareStructuredOutput({
       systemPrompt: `${ANALYSIS_SYSTEM_PROMPT}\n\n${input.locale === "us-en" ? "IMPORTANT: Understand English input and return every user-facing string in natural US English." : "重要: ユーザー向けの文字列はすべて自然な日本語で返してください。"}`,
       input: {
-        entryKind: "reflection",
+        entryKind: "combined",
         transcript: input.transcript,
         referenceDate: input.referenceDate,
         timeZone: input.timeZone,

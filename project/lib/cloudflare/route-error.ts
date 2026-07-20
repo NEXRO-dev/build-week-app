@@ -26,13 +26,23 @@ export function cloudflareApiErrorResponse(error: unknown) {
       );
     }
 
-    if (error.status === 429) {
+    if (error.status === 429 && error.code === 3036) {
       return Response.json(
         {
           error: "Cloudflare Workers AIの利用上限に達しました。時間をおいて再試行してください。",
           code: "CLOUDFLARE_LIMIT_REACHED",
         },
         { status: 429 },
+      );
+    }
+
+    if (error.status === 429) {
+      return Response.json(
+        {
+          error: "AI音声認識が一時的に混み合っています。少し待ってから再試行してください。",
+          code: "CLOUDFLARE_REQUEST_FAILED",
+        },
+        { status: 503 },
       );
     }
   }

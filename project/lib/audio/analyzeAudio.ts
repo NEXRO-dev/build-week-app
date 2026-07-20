@@ -6,6 +6,85 @@ function percentile(values: number[], ratio: number) {
   return sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * ratio))];
 }
 
+export function analyzePcmChannels(
+  channels: Float32Array[],
+  sampleRate: number,
+) {
+  const sampleCount = Math.max(0, ...channels.map((channel) => channel.length));
+  if (!channels.length || !sampleCount || sampleRate <= 0) {
+    return { averageVolume: null, silenceRatio: null };
+  }
+
+  const frameSize = Math.max(1, Math.round(sampleRate * 0.02));
+  const frameRms: number[] = [];
+
+  for (let start = 0; start < sampleCount; start += frameSize) {
+    const end = Math.min(start + frameSize, sampleCount);
+    let strongestChannelRms = 0;
+
+    for (const channel of channels) {
+      let sumSquares = 0;
+      const channelEnd = Math.min(end, channel.length);
+      for (let index = start; index < channelEnd; index += 1) {
+        sumSquares += channel[index] ** 2;
+      }
+      const samplesInFrame = Math.max(channelEnd - start, 1);
+      strongestChannelRms = Math.max(
+        strongestChannelRms,
+        Math.sqrt(sumSquares / samplesInFrame),
+      );
+    }
+
+    frameRms.push(strongestChannelRms);
+  }
+
+  const activeReference = percentile(frameRms, 0.95);
+  if (activeReference < 0.0005) {
+    return {
+      averageVolume: Number(
+        (frameRms.reduce((sum, rms) => sum + rms, 0) / frameRms.length).toFixed(3),
+      ),
+      silenceRatio: 1,
+    };
+  }
+
+  const noiseFloor = percentile(frameRms, 0.2);
+  const adaptiveThreshold =
+    noiseFloor + Math.max(0.0002, (activeReference - noiseFloor) * 0.25);
+  const silenceThreshold = Math.max(
+    0.0001,
+    Math.min(activeReference * 0.6, adaptiveThreshold),
+  );
+  const voicedIndexes = frameRms
+    .map((rms, index) => (rms >= silenceThreshold ? index : -1))
+    .filter((index) => index >= 0);
+
+  if (!voicedIndexes.length) {
+    return {
+      averageVolume: Number(
+        (frameRms.reduce((sum, rms) => sum + rms, 0) / frameRms.length).toFixed(3),
+      ),
+      silenceRatio: 1,
+    };
+  }
+
+  // Remove start/stop operation latency from the pause measurement.
+  const firstVoiced = voicedIndexes[0];
+  const lastVoiced = voicedIndexes[voicedIndexes.length - 1];
+  const spokenFrames = frameRms.slice(firstVoiced, lastVoiced + 1);
+  const silentFrames = spokenFrames.filter((rms) => rms < silenceThreshold).length;
+  const voicedFrames = spokenFrames.filter((rms) => rms >= silenceThreshold);
+
+  return {
+    averageVolume: Number(
+      (
+        voicedFrames.reduce((sum, rms) => sum + rms, 0) / voicedFrames.length
+      ).toFixed(3),
+    ),
+    silenceRatio: Number((silentFrames / spokenFrames.length).toFixed(3)),
+  };
+}
+
 export async function analyzeAudioBlob(
   blob: Blob,
   durationSec: number,
@@ -31,58 +110,16 @@ export async function analyzeAudioBlob(
 
     try {
       const buffer = await context.decodeAudioData(await blob.arrayBuffer());
-      const samples = buffer.getChannelData(0);
-      const frameSize = Math.max(1, Math.round(buffer.sampleRate * 0.02));
-      const frameRms: number[] = [];
-
-      for (let start = 0; start < samples.length; start += frameSize) {
-        const end = Math.min(start + frameSize, samples.length);
-        let sumSquares = 0;
-
-        for (let index = start; index < end; index += 1) {
-          sumSquares += samples[index] ** 2;
-        }
-
-        frameRms.push(Math.sqrt(sumSquares / Math.max(end - start, 1)));
-      }
-
-      const activeReference = percentile(frameRms, 0.9);
-      const silenceThreshold = Math.max(0.006, activeReference * 0.12);
-      const voicedIndexes = frameRms
-        .map((rms, index) => (rms >= silenceThreshold ? index : -1))
-        .filter((index) => index >= 0);
-
-      if (!voicedIndexes.length) {
-        return {
-          durationSec: Number(buffer.duration.toFixed(1)),
-          averageVolume: frameRms.length
-            ? Number((frameRms.reduce((sum, rms) => sum + rms, 0) / frameRms.length).toFixed(3))
-            : null,
-          silenceRatio: 1,
-          speechRate: null,
-        };
-      }
-
-      // Remove start/stop operation latency from the pause measurement.
-      const firstVoiced = voicedIndexes[0];
-      const lastVoiced = voicedIndexes[voicedIndexes.length - 1];
-      const spokenFrames = frameRms.slice(firstVoiced, lastVoiced + 1);
-      const silentFrames = spokenFrames.filter((rms) => rms < silenceThreshold).length;
-      const voicedFrames = spokenFrames.filter((rms) => rms >= silenceThreshold);
+      const channels = Array.from(
+        { length: buffer.numberOfChannels },
+        (_, index) => buffer.getChannelData(index),
+      );
+      const analysis = analyzePcmChannels(channels, buffer.sampleRate);
 
       return {
         durationSec: Number(buffer.duration.toFixed(1)),
-        averageVolume: voicedFrames.length
-          ? Number(
-              (
-                voicedFrames.reduce((sum, rms) => sum + rms, 0) /
-                voicedFrames.length
-              ).toFixed(3),
-            )
-          : null,
-        silenceRatio: spokenFrames.length
-          ? Number((silentFrames / spokenFrames.length).toFixed(3))
-          : null,
+        averageVolume: analysis.averageVolume,
+        silenceRatio: analysis.silenceRatio,
         speechRate: null,
       };
     } finally {

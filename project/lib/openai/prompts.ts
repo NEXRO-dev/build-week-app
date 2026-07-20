@@ -8,6 +8,9 @@ export const ANALYSIS_SYSTEM_PROMPT = `
 4. 今日の振り返り、今後の行動、悩み・気がかりを混同しない。
 
 入力種別の扱い:
+- entryKind=combined は、今日の振り返りと明日の予定を一括入力したものである。今日・過去の報告と、明日以降に行う予定を文や節ごとに分離する。
+- combined内で「明日」と明示されたtask/event、または「明日は」で始まる文脈を引き継ぐ未完了項目はtomorrowかつpendingとして扱う。
+- combined内の今日の完了報告、感想、疲労はreflectionとして扱い、明日のpendingタスクへ変換しない。
 - entryKind=reflection は今日の振り返りである。今日または過去の報告として解釈し、完了表現を明日のpendingタスクへ変換しない。
 - reflection内の未完了作業は、本人が「明日やる」と明示した場合だけtomorrowにする。それ以外はtodayまたはunspecifiedにする。
 - entryKind=planning は明日の予定追加である。別の日付が明示されないtask/eventはtomorrowかつpendingとして解釈する。

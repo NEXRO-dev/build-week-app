@@ -6,6 +6,7 @@ import type { CSSProperties } from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { analyzeAudioBlob } from "@/lib/audio/analyzeAudio";
+import { normalizeTranscriptionAudio } from "@/lib/audio/normalizeTranscriptionAudio";
 import { useI18n } from "@/lib/i18n";
 import type { AudioMeta } from "@/types/echly";
 
@@ -62,11 +63,16 @@ const audioConstraints: MediaStreamConstraints = {
   },
 };
 
+function isSilentMeta(meta: AudioMeta) {
+  return meta.averageVolume === 0 && meta.silenceRatio === 1;
+}
+
 function audioQualityHint(meta: AudioMeta | null) {
   if (!meta) return null;
   if (meta.durationSec < 3) return "録音が短めです。5秒以上話すと認識しやすくなります。";
-  if (meta.averageVolume !== null && meta.averageVolume < 0.018) return "声が小さめです。マイクに少し近づくと認識しやすくなります。";
-  if (meta.silenceRatio !== null && meta.silenceRatio > 0.65) return "無音が多めです。話し始めてから録音すると安定します。";
+  if (isSilentMeta(meta)) {
+    return "マイクの音声信号を確認できませんでした。録音を再生し、端末の入力マイクを確認してください。";
+  }
   return null;
 }
 export function RecorderPanel({
@@ -120,15 +126,55 @@ export function RecorderPanel({
       startedAtRef.current = Date.now(); setElapsed(0); onDiscard();
       recorder.ondataavailable = (event) => { if (event.data.size) chunksRef.current.push(event.data); };
       recorder.onstop = async () => {
-        const durationSec = Math.max(1, Math.round((Date.now() - (startedAtRef.current ?? Date.now())) / 1000));
-        const blob = new Blob(chunksRef.current, { type: recorder.mimeType || "audio/webm" });
-        const meta = await analyzeAudioBlob(blob, durationSec);
-        setLastAudioMeta(meta);
-        onAudioReady(blob, meta);
-        stream.getTracks().forEach((track) => track.stop()); streamRef.current = null; startedAtRef.current = null;
+        try {
+          const durationSec = Math.max(1, Math.round((Date.now() - (startedAtRef.current ?? Date.now())) / 1000));
+          const rawBlob = new Blob(chunksRef.current, { type: recorder.mimeType || "audio/webm" });
+          let blob = rawBlob;
+          const rawMeta = await analyzeAudioBlob(rawBlob, durationSec);
+          let meta = rawMeta;
+
+          // Re-encoding to 16 kHz mono WAV with speech-level normalization helps
+          // transcription, but must never replace an audible recording with silence.
+          const normalizedBlob = await normalizeTranscriptionAudio(rawBlob);
+          let normalizedMeta: AudioMeta | null = null;
+          if (normalizedBlob !== rawBlob) {
+            normalizedMeta = await analyzeAudioBlob(normalizedBlob, durationSec);
+            if (!isSilentMeta(normalizedMeta) || isSilentMeta(meta)) {
+              blob = normalizedBlob;
+              meta = normalizedMeta;
+            }
+          }
+
+          console.info("[recorder]", {
+            mimeType: recorder.mimeType || "unknown",
+            rawBytes: rawBlob.size,
+            rawAverageVolume: rawMeta.averageVolume,
+            rawSilenceRatio: rawMeta.silenceRatio,
+            normalizedAverageVolume: normalizedMeta?.averageVolume ?? null,
+            normalizedSilenceRatio: normalizedMeta?.silenceRatio ?? null,
+            sentNormalized: blob !== rawBlob,
+            trackSettings: stream.getAudioTracks()[0]?.getSettings() ?? null,
+          });
+
+          setLastAudioMeta(meta);
+          onAudioReady(blob, meta);
+          if (isSilentMeta(meta)) {
+            onError(t("録音データが無音です。録音を再生し、端末で選択されている入力マイクを確認してください。", "The recording is silent. Play it back and check the input microphone selected on your device."));
+          }
+        } catch {
+          onError(t("録音データを作成できませんでした。もう一度録音してください。", "The recording could not be created. Please record again."));
+        } finally {
+          stream.getTracks().forEach((track) => track.stop());
+          streamRef.current = null;
+          startedAtRef.current = null;
+        }
       };
       recorder.start(500); setIsRecording(true);
-    } catch { onError(t("マイクを開始できませんでした。ブラウザのマイク権限を確認してください。", "Could not start the microphone. Check your browser's microphone permission.")); }
+    } catch {
+      streamRef.current?.getTracks().forEach((track) => track.stop());
+      streamRef.current = null;
+      onError(t("マイクを開始できませんでした。ブラウザのマイク権限を確認してください。", "Could not start the microphone. Check your browser's microphone permission."));
+    }
   }
 
   function stopRecording() {
