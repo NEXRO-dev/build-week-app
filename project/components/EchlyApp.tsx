@@ -169,6 +169,7 @@ export function EchlyApp({ todayLabel }: EchlyAppProps) {
   const [appliedActionIds, setAppliedActionIds] = useState<string[]>([]);
   const [history, setHistory] = useState<CheckIn[]>(() => getSampleHistory());
   const [saveTranscript, setSaveTranscript] = useState(true);
+  const [tabsPreloaded, setTabsPreloaded] = useState(false);
 
   useEffect(() => {
     const timeoutId = window.setTimeout(() => {
@@ -197,6 +198,22 @@ export function EchlyApp({ todayLabel }: EchlyAppProps) {
     window.scrollTo({ top: 0, behavior: "auto" });
   }, [view]);
 
+  useEffect(() => {
+    if (!session || tabsPreloaded) return;
+    const idleWindow = window as Window & {
+      requestIdleCallback?: (callback: () => void, options?: { timeout: number }) => number;
+      cancelIdleCallback?: (id: number) => void;
+    };
+
+    if (idleWindow.requestIdleCallback) {
+      const idleId = idleWindow.requestIdleCallback(() => setTabsPreloaded(true), { timeout: 800 });
+      return () => idleWindow.cancelIdleCallback?.(idleId);
+    }
+
+    const timeoutId = window.setTimeout(() => setTabsPreloaded(true), 250);
+    return () => window.clearTimeout(timeoutId);
+  }, [session, tabsPreloaded]);
+
   const actionCount = useMemo(() => {
     if (!plan) return 0;
     return (
@@ -216,6 +233,7 @@ export function EchlyApp({ todayLabel }: EchlyAppProps) {
   }
 
   if (!session) return <SignInView />;
+  const signedInUser = session.user;
 
   function handleAudioReady(step: CheckInStep, blob: Blob, meta: AudioMeta) {
     setAudioByStep((current) => ({
@@ -467,10 +485,8 @@ export function EchlyApp({ todayLabel }: EchlyAppProps) {
     setView("checkin");
   }
 
-  let content;
-
-  if (view === "analysis") {
-    content = analysis ? (
+  function renderView(targetView: WorkspaceView) {
+    if (targetView === "analysis") return analysis ? (
       <AnalysisView
         transcript={transcript}
         audioBlob={audioByStep[1].blob ?? audioByStep[2].blob}
@@ -486,8 +502,8 @@ export function EchlyApp({ todayLabel }: EchlyAppProps) {
     ) : (
       <EmptyWorkspaceView type="analysis" onCheckIn={() => setView("checkin")} />
     );
-  } else if (view === "plan") {
-    content = plan ? (
+
+    if (targetView === "plan") return plan ? (
       <PlanView plan={plan} onBack={() => setView("analysis")} onApproval={() => setView("approval")} />
     ) : (
       <EmptyWorkspaceView
@@ -497,8 +513,8 @@ export function EchlyApp({ todayLabel }: EchlyAppProps) {
         onShowAnalysis={() => setView("analysis")}
       />
     );
-  } else if (view === "approval" && plan) {
-    content = (
+
+    if (targetView === "approval" && plan) return (
       <ApprovalView
         plan={plan}
         appliedActionIds={appliedActionIds}
@@ -507,21 +523,21 @@ export function EchlyApp({ todayLabel }: EchlyAppProps) {
         onBack={() => setView("plan")}
       />
     );
-  } else if (view === "history") {
-    content = <HistoryView checkIns={history} onNewCheckIn={startNewCheckIn} />;
-  } else if (view === "settings") {
-    content = (
+
+    if (targetView === "history") return <HistoryView checkIns={history} onNewCheckIn={startNewCheckIn} />;
+
+    if (targetView === "settings") return (
       <SettingsView
-        user={session.user}
+        user={signedInUser}
         saveTranscript={saveTranscript}
         onSaveTranscriptChange={setSaveTranscript}
       />
     );
-  } else {
-    content = (
+
+    return (
       <CheckInView
         todayLabel={todayLabel}
-        userName={session.user.name}
+        userName={signedInUser.name}
         previousCondition={history.find((item) => item.condition.methodVersion === "echly-load-v1")?.condition ?? null}
         transcript={draftTranscript}
         onTranscriptChange={setDraftTranscript}
@@ -540,9 +556,19 @@ export function EchlyApp({ todayLabel }: EchlyAppProps) {
     );
   }
 
+  const primaryViews = ["checkin", "analysis", "plan", "history", "settings"] as const;
+  const viewsToMount = tabsPreloaded
+    ? primaryViews
+    : primaryViews.filter((targetView) => targetView === view);
+
   return (
     <AppShell view={view} onViewChange={setView}>
-      {content}
+      {viewsToMount.map((targetView) => (
+        <div key={targetView} hidden={view !== targetView} aria-hidden={view !== targetView}>
+          {renderView(targetView)}
+        </div>
+      ))}
+      {view === "approval" ? renderView("approval") : null}
     </AppShell>
   );
 }
