@@ -472,7 +472,39 @@ OpenAI Node SDK is included as an optional client path in the repository, but th
 
 OpenAI Node SDKはリポジトリ内に任意のクライアント経路として含まれていますが、現在のライブな文字起こし・抽出・プラン生成ルートはCloudflare Workers AIを使用しています。
 
-## 8. Architecture（アーキテクチャ）
+## 8. How We Used Codex And GPT-5.6（CodexとGPT-5.6の活用）
+
+### English
+
+We used Codex as an engineering copilot throughout development. GPT-5.6 was the reasoning and coding model used through Codex.
+
+Concretely, we used them to:
+
+- Inspect and understand the existing Next.js codebase before making changes.
+- Implement and refactor product flows across the UI, API routes, and database layer.
+- Trace bugs, review safety and edge cases, and propose targeted fixes.
+- Diagnose and resolve Git merge conflicts and conflict-related errors while preserving the intended changes from both sides.
+- Add and improve tests, then run the relevant test, lint, type-check, and production-build commands.
+- Keep the English and Japanese documentation aligned with the shipped product.
+
+Every AI-generated change was reviewed in the repository before it was accepted. This development-time use is separate from Echly's user-facing AI runtime: the deployed transcription, extraction, and planning routes currently use Cloudflare Workers AI. The repository also retains an optional OpenAI client path, whose default text model is `gpt-5.6-sol`, for compatible self-hosted or alternate runtime configurations.
+
+### 日本語
+
+Codexを開発全体のエンジニアリング・コパイロットとして使用し、GPT-5.6をCodex上の推論・コーディングモデルとして活用しました。
+
+具体的には、以下の作業で使用しています。
+
+- 変更前に既存のNext.jsコードベースを調査し、構成や処理を把握する。
+- UI、APIルート、データベース層をまたぐプロダクトフローを実装・リファクタリングする。
+- 不具合の原因を追跡し、安全性やエッジケースをレビューして、対象を絞った修正案を作る。
+- Gitのマージコンフリクトや衝突に起因するエラーを調査し、双方の意図した変更を保ちながら解消する。
+- テストを追加・改善し、内容に応じてテスト、lint、型チェック、本番ビルドを実行する。
+- 日英ドキュメントを、実際に提供しているプロダクトの内容と一致させる。
+
+AIが生成した変更は、そのまま採用せず、リポジトリ上で内容をレビューしてから反映しました。この開発時の利用は、Echlyのユーザー向けAI実行基盤とは別です。現在デプロイされている文字起こし・抽出・プラン生成ルートはCloudflare Workers AIを使用します。また、互換性のあるセルフホスト構成や代替実行環境向けにOpenAIクライアント経路も残しており、その既定テキストモデルは `gpt-5.6-sol` です。
+
+## 9. Architecture（アーキテクチャ）
 
 ### English
 
@@ -526,7 +558,7 @@ flowchart LR
 5. `/api/plan` が翌日プランを生成・検証し、決定論的な補完ロジックが不足や衝突を補正する。
 6. ワークスペースデータは認証済みユーザー単位でTurso/libSQLへ保存される。
 
-## 9. Data And Privacy（データとプライバシー）
+## 10. Data And Privacy（データとプライバシー）
 
 ### English
 
@@ -578,7 +610,7 @@ Raw audio is not stored. Recordings are processed for transcription and derived 
 
 生の録音音声は保存しません。録音は文字起こしと派生特徴の処理に使い、その後破棄します。
 
-## 10. Setup（セットアップ）
+## 11. Setup（セットアップ）
 
 ### English
 
@@ -656,7 +688,7 @@ Echly固有のワークスペーステーブルは、認証済みワークスペ
 http://localhost:3000/api/auth/callback/google
 ```
 
-## 11. Environment Variables（環境変数）
+## 12. Environment Variables（環境変数）
 
 ```dotenv
 # Authentication / database: required
@@ -676,7 +708,7 @@ CLOUDFLARE_TRANSCRIPTION_FALLBACK_MODEL=@cf/openai/whisper-large-v3-turbo
 
 # Optional OpenAI client path
 OPENAI_API_KEY=
-OPENAI_TEXT_MODEL=
+OPENAI_TEXT_MODEL=gpt-5.6-sol
 OPENAI_TRANSCRIPTION_MODEL=gpt-4o-mini-transcribe
 
 # Web Push: required only when notifications are enabled
@@ -696,7 +728,7 @@ Do not commit `.env.local` or expose server secrets to client-side code.
 
 `.env.local` をコミットしたり、サーバー用secretをクライアントコードに公開したりしないでください。
 
-## 12. Running And Testing（起動とテスト）
+## 13. Running And Testing（起動とテスト）
 
 ### English
 
@@ -766,7 +798,7 @@ npm run build
 
 現在のテストは、振り返り受付時間、文字起こし品質、無音ハルシネーション対策、ブラウザ言語判定、Google Calendarのbusy時間を考慮したプラン生成、通知時刻、予定の5分前通知を検証しています。
 
-## 13. Repository Structure（リポジトリ構成）
+## 14. Repository Structure（リポジトリ構成）
 
 ```text
 project/
@@ -804,7 +836,7 @@ project/
 └── vercel.json                # cron configuration
 ```
 
-## 14. Current Limitations（現在の制約）
+## 15. Current Limitations（現在の制約）
 
 ### English
 
@@ -824,7 +856,7 @@ project/
 - Calendar同期はOAuth scopeの有無に依存します。
 - ライブAI処理にはCloudflare Workers AIの認証情報が必要です。
 
-## 15. Why It Can Win（賞を狙えるポイント）
+## 16. Why It Can Win（賞を狙えるポイント）
 
 ### English
 
@@ -846,7 +878,7 @@ project/
 - **プライバシー前提:** 生音声を保存せず、重要な出力はユーザー確認を通す。
 - **プロダクト完成度:** 認証、永続化、PWA、通知、履歴、法務ページ、Calendar APIまであり、単なる画面デモではなくサービスとして見える。
 
-## 16. Roadmap（今後の展望）
+## 17. Roadmap（今後の展望）
 
 ### English
 
@@ -870,7 +902,7 @@ project/
 - オフライン録音と再送キューを追加する。
 - 音声成分がRaw TLXと眠気だけの場合より、翌日の計画結果を改善するか検証する。
 
-## 17. License（ライセンス）
+## 18. License（ライセンス）
 
 ### English
 
