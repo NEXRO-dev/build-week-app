@@ -37,6 +37,7 @@ import { normalizeClockTime, normalizeExtractedTaskTimes } from "@/lib/tasks/tim
 import type {
   AnalysisResult,
   AudioMeta,
+  CalendarEvent,
   CheckIn,
   ConditionSignal,
   ExtractedTask,
@@ -122,6 +123,30 @@ async function parseApiResponse<T>(
     throw new ApiClientError(message, data.code);
   }
   return data;
+}
+
+async function fetchGoogleCalendarEvents(
+  targetDate: string,
+  timeZone: string,
+  signal?: AbortSignal,
+) {
+  const query = new URLSearchParams({ date: targetDate, timeZone });
+  const response = await fetch(`/api/calendar/events?${query}`, {
+    cache: "no-store",
+    signal,
+  });
+  const data = await response.json().catch(() => ({})) as {
+    events?: CalendarEvent[];
+    code?: string;
+  };
+  if (response.ok) return data.events ?? [];
+  if (
+    data.code === "CALENDAR_NOT_CONNECTED" ||
+    data.code === "CALENDAR_RECONNECT_REQUIRED"
+  ) {
+    return [];
+  }
+  throw new Error("CALENDAR_EVENTS_FAILED");
 }
 
 function newId(prefix: string) {
@@ -365,6 +390,8 @@ export function EchlyApp({
   const [historyTranscripts, setHistoryTranscripts] = useState<HistoryTranscriptEntry[]>([]);
   const [selectedHistoryId, setSelectedHistoryId] = useState<string | null>(initialHistoryId);
   const [scheduleEntries, setScheduleEntries] = useState<ScheduleEntry[]>([]);
+  const [googleCalendarEvents, setGoogleCalendarEvents] = useState<CalendarEvent[]>([]);
+  const [googleCalendarLoading, setGoogleCalendarLoading] = useState(false);
   const [storageLoaded, setStorageLoaded] = useState(false);
   const [zonedNow, setZonedNow] = useState<ZonedNow | null>(null);
   const [debugTimeZone, setDebugTimeZone] = useState<string | null>(null);
@@ -622,6 +649,40 @@ export function EchlyApp({
 
   const localDate = zonedNow?.dateKey ?? null;
   const tomorrowDate = localDate ? nextDateKey(localDate) : null;
+  const activeTimeZone = zonedNow?.timeZone ?? null;
+
+  useEffect(() => {
+    if (!tomorrowDate || !activeTimeZone) return;
+    const targetDate = tomorrowDate;
+    const timeZone = activeTimeZone;
+    const controller = new AbortController();
+    let cancelled = false;
+
+    async function loadGoogleCalendarEvents() {
+      setGoogleCalendarLoading(true);
+      try {
+        const events = await fetchGoogleCalendarEvents(
+          targetDate,
+          timeZone,
+          controller.signal,
+        );
+        if (cancelled) return;
+        setGoogleCalendarEvents(events);
+      } catch (caught) {
+        if (!cancelled && !(caught instanceof DOMException && caught.name === "AbortError")) {
+          setGoogleCalendarEvents([]);
+        }
+      } finally {
+        if (!cancelled) setGoogleCalendarLoading(false);
+      }
+    }
+
+    void loadGoogleCalendarEvents();
+    return () => {
+      cancelled = true;
+      controller.abort();
+    };
+  }, [activeTimeZone, tomorrowDate]);
   const todayCheckIn = useMemo(
     () =>
       localDate
@@ -1589,7 +1650,7 @@ export function EchlyApp({
       );
       return;
     }
-    if (!planTasks.length) {
+    if (!planTasks.length && !googleCalendarEvents.length) {
       setError(
         isEnglish
           ? "Add at least one plan for tomorrow first."
@@ -1605,6 +1666,18 @@ export function EchlyApp({
     );
 
     try {
+      let calendarEvents = googleCalendarEvents;
+      if (activeTimeZone) {
+        try {
+          calendarEvents = await fetchGoogleCalendarEvents(
+            tomorrowDate,
+            activeTimeZone,
+          );
+          setGoogleCalendarEvents(calendarEvents);
+        } catch {
+          // Continue with the last successfully loaded snapshot.
+        }
+      }
       const response = await fetch("/api/plan", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -1615,7 +1688,7 @@ export function EchlyApp({
             topicType: task.topicType ?? null,
           })),
           condition: planningCondition,
-          calendarEvents: [],
+          calendarEvents,
         }),
       });
       const data = await parseApiResponse<{
@@ -1724,6 +1797,49 @@ export function EchlyApp({
         };
         await queueCheckInRecord(updated);
         replaceCheckInRecord(updated);
+      }
+
+      if (zonedNow) {
+        setProcessingStage(
+          isEnglish
+            ? "Syncing Google Calendar..."
+            : "Google Calendarに同期中...",
+        );
+        try {
+          const calendarResponse = await fetch("/api/calendar/sync", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              targetDate: tomorrowDate,
+              timeZone: zonedNow.timeZone,
+              locale: isEnglish ? "us-en" : "jp-ja",
+              plan,
+            }),
+          });
+          if (!calendarResponse.ok) {
+            const calendarError = await calendarResponse.json().catch(() => ({})) as {
+              code?: string;
+            };
+            if (calendarError.code !== "CALENDAR_NOT_CONNECTED") {
+              setError(
+                calendarError.code === "CALENDAR_RECONNECT_REQUIRED"
+                  ? t(
+                      "予定は確定しました。Google Calendarを設定画面から再連携してください。",
+                      "The schedule was confirmed. Reconnect Google Calendar in Settings.",
+                    )
+                  : t(
+                      "予定は確定しましたが、Google Calendarに同期できませんでした。",
+                      "The schedule was confirmed, but Google Calendar sync failed.",
+                    ),
+              );
+            }
+          }
+        } catch {
+          setError(t(
+            "予定は確定しましたが、Google Calendarに同期できませんでした。",
+            "The schedule was confirmed, but Google Calendar sync failed.",
+          ));
+        }
       }
     } catch (caught) {
       setError(
@@ -1858,6 +1974,7 @@ export function EchlyApp({
       return plan ? (
         <PlanView
           plan={plan}
+          calendarEvents={googleCalendarEvents}
           targetDate={tomorrowDate}
           generationSource={planGenerationSource}
           approvalStatus={activePlanRecord?.approvalStatus ?? "draft"}
@@ -1873,6 +1990,8 @@ export function EchlyApp({
         <PlanEmptyView
           targetDate={tomorrowDate}
           tasks={planTasks}
+          calendarEvents={googleCalendarEvents}
+          calendarLoading={googleCalendarLoading}
           hasTodayCondition={Boolean(activeAnalysis)}
           processingStage={processingStage}
           error={error}

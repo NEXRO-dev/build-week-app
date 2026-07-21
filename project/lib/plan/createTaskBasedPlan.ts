@@ -1,5 +1,6 @@
-import { normalizeClockTime } from "@/lib/tasks/time";
+import { normalizeClockTime } from "../tasks/time.ts";
 import type {
+  CalendarEvent,
   ConditionSignal,
   ExtractedTask,
   PlanItem,
@@ -49,6 +50,15 @@ function overlaps(intervals: Interval[], start: number, end: number) {
 function reserve(intervals: Interval[], start: number, end: number) {
   intervals.push({ start, end });
   intervals.sort((first, second) => first.start - second.start);
+}
+
+function calendarIntervals(calendarEvents: CalendarEvent[]) {
+  return calendarEvents.flatMap((event): Interval[] => {
+    if (event.busy === false) return [];
+    const start = minutes(event.startTime);
+    const end = minutes(event.endTime);
+    return start !== null && end !== null && end > start ? [{ start, end }] : [];
+  });
 }
 
 function findOpenStart(intervals: Interval[], duration: number) {
@@ -123,8 +133,9 @@ export function createTaskBasedPlan(
   tasks: ExtractedTask[],
   condition: ConditionSignal,
   locale: Locale = "jp-ja",
+  calendarEvents: CalendarEvent[] = [],
 ): TomorrowPlan {
-  const intervals: Interval[] = [];
+  const intervals: Interval[] = calendarIntervals(calendarEvents);
   for (const task of tasks) {
     const start = minutes(task.startTime);
     if (start === null) continue;
@@ -217,14 +228,39 @@ export function completePlanWithTasks(
   generated: TomorrowPlan,
   tasks: ExtractedTask[],
   locale: Locale = "jp-ja",
+  calendarEvents: CalendarEvent[] = [],
 ) {
-  const fallback = createTaskBasedPlan(tasks, generated.condition, locale);
+  const fallback = createTaskBasedPlan(
+    tasks,
+    generated.condition,
+    locale,
+    calendarEvents,
+  );
   const taskIds = new Set(tasks.map((task) => task.id));
+  const taskById = new Map(tasks.map((task) => [task.id, task]));
+  const busyIntervals = calendarIntervals(calendarEvents);
   const used = new Set<string>();
 
   function validItems(items: PlanItem[]) {
     return items.filter((item) => {
       if (!item.taskId || !taskIds.has(item.taskId) || used.has(item.taskId)) {
+        return false;
+      }
+      const task = taskById.get(item.taskId);
+      const start = minutes(item.proposedTime ?? item.originalTime);
+      const requestedEnd = minutes(item.endTime);
+      const end = start === null
+        ? null
+        : requestedEnd !== null && requestedEnd > start
+          ? requestedEnd
+          : start + (task ? durationFor(task) : 30);
+      if (
+        task &&
+        !normalizeClockTime(task.startTime) &&
+        start !== null &&
+        end !== null &&
+        overlaps(busyIntervals, start, end)
+      ) {
         return false;
       }
       used.add(item.taskId);
@@ -249,10 +285,19 @@ export function completePlanWithTasks(
     }
   }
 
+  const validRestBlocks = generated.restBlocks.filter((block) => {
+    const start = minutes(block.startTime);
+    const end = minutes(block.endTime);
+    return start !== null && end !== null && end > start
+      ? !overlaps(busyIntervals, start, end)
+      : false;
+  });
+
   return {
     ...generated,
     keep,
     move,
     reschedule,
+    restBlocks: validRestBlocks.length ? validRestBlocks : fallback.restBlocks,
   };
 }

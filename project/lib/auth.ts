@@ -19,7 +19,8 @@ export const auth = betterAuth({
     google: {
       clientId: requiredEnv("GOOGLE_CLIENT_ID"),
       clientSecret: requiredEnv("GOOGLE_CLIENT_SECRET"),
-      prompt: "select_account",
+      accessType: "offline",
+      prompt: "select_account consent",
     },
   },
 });

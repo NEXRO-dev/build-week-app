@@ -8,6 +8,7 @@ import { type ReactNode, useEffect, useState } from "react";
 
 import { APP_BUILD_TIME, APP_VERSION } from "@/lib/app-version";
 import { authClient } from "@/lib/auth-client";
+import { GOOGLE_CALENDAR_EVENTS_SCOPE } from "@/lib/google-calendar/constants";
 import { useI18n } from "@/lib/i18n";
 import {
   announcePushNotificationChange,
@@ -69,12 +70,39 @@ export function SettingsView({
   const [notificationMessage, setNotificationMessage] = useState<string | null>(null);
   const [calendarApprovalBusy, setCalendarApprovalBusy] = useState(false);
   const [calendarApprovalMessage, setCalendarApprovalMessage] = useState<string | null>(null);
+  const [calendarConnectionState, setCalendarConnectionState] = useState<
+    "loading" | "connected" | "disconnected" | "error"
+  >("loading");
+  const [calendarConnectionBusy, setCalendarConnectionBusy] = useState(false);
+  const [calendarConnectionMessage, setCalendarConnectionMessage] = useState<string | null>(null);
   const profileImageUrl =
     user.image && failedAvatarUrl !== user.image ? user.image : null;
 
   useEffect(() => {
     const intervalId = window.setInterval(() => setNow(new Date()), 30_000);
     return () => window.clearInterval(intervalId);
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadCalendarConnection() {
+      try {
+        const response = await fetch("/api/calendar/connection", { cache: "no-store" });
+        if (!response.ok) throw new Error("connection_failed");
+        const data = await response.json() as { connected?: boolean };
+        if (!cancelled) {
+          setCalendarConnectionState(data.connected ? "connected" : "disconnected");
+        }
+      } catch {
+        if (!cancelled) setCalendarConnectionState("error");
+      }
+    }
+
+    void loadCalendarConnection();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   useEffect(() => {
@@ -154,6 +182,28 @@ export function SettingsView({
   async function signOut() {
     await authClient.signOut();
     window.location.assign(`/${locale}`);
+  }
+
+  async function connectGoogleCalendar() {
+    setCalendarConnectionBusy(true);
+    setCalendarConnectionMessage(null);
+    try {
+      const result = await authClient.linkSocial({
+        provider: "google",
+        scopes: [GOOGLE_CALENDAR_EVENTS_SCOPE],
+        callbackURL: `/${locale}/setting`,
+        errorCallbackURL: `/${locale}/setting?calendar=error`,
+      });
+      if (result.error) {
+        setCalendarConnectionState("error");
+        setCalendarConnectionMessage(t("Google Calendarとの連携を開始できませんでした。", "Could not start Google Calendar connection."));
+        setCalendarConnectionBusy(false);
+      }
+    } catch {
+      setCalendarConnectionState("error");
+      setCalendarConnectionMessage(t("Google Calendarとの連携を開始できませんでした。", "Could not start Google Calendar connection."));
+      setCalendarConnectionBusy(false);
+    }
   }
 
   async function enableNotifications() {
@@ -261,7 +311,32 @@ export function SettingsView({
           </div>
         </section>
 
-        <section><h2 className="mb-2 text-xs font-bold">{t("Google連携", "Google integrations")}</h2><div className="divide-y divide-[#ececf3] rounded-lg border border-[#e3e5ef]"><Row icon={CalendarDays} title="Google Calendar" description={t("未連携", "Not connected")} /></div></section>
+        <section>
+          <h2 className="mb-2 text-xs font-bold">{t("Google連携", "Google integrations")}</h2>
+          <div className="rounded-lg border border-[#e3e5ef]">
+            <Row
+              icon={CalendarDays}
+              title="Google Calendar"
+              description={calendarConnectionState === "connected"
+                ? t("予定を確定すると自動で同期します", "Confirmed schedules sync automatically")
+                : calendarConnectionState === "loading"
+                  ? t("連携状態を確認中", "Checking connection")
+                  : t("予定をGoogle Calendarに同期", "Sync schedules to Google Calendar")}
+              action={calendarConnectionState === "connected"
+                ? <span className="rounded bg-[#eaf8f2] px-2 py-1 text-[9px] font-bold text-[#23775d]">{t("連携済み", "Connected")}</span>
+                : <Button
+                    size="sm"
+                    variant="outline"
+                    isDisabled={calendarConnectionBusy || calendarConnectionState === "loading"}
+                    onPress={() => void connectGoogleCalendar()}
+                    className="h-8 shrink-0 px-2 text-[10px]"
+                  >
+                    {calendarConnectionBusy ? t("接続中", "Connecting") : t("連携する", "Connect")}
+                  </Button>}
+            />
+            {calendarConnectionMessage ? <p role="status" className="border-t border-[#ececf3] px-3 py-2 text-[10px] leading-4 text-[#b34848]">{calendarConnectionMessage}</p> : null}
+          </div>
+        </section>
 
         {isPwa ? <section>
           <h2 className="mb-2 text-xs font-bold">{t("通知", "Notifications")}</h2>

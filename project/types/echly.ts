@@ -156,6 +156,8 @@ export type CalendarEvent = {
   endTime: string;
   movable: boolean;
   importance: Importance;
+  allDay?: boolean;
+  busy?: boolean;
 };
 
 export type AnalysisResult = {

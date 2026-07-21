@@ -70,6 +70,8 @@ export const PLAN_SYSTEM_PROMPT = `
 
 条件:
 - tasksには明日実行する未完了のtask/eventだけが渡される
+- calendarEventsにはGoogle Calendarから読み込んだ既存予定が渡される。固定済みの時間枠として扱い、keep/move/rescheduleには含めない
+- 新しい予定と休息ブロックは、busy=trueのcalendarEventsと重ならない時間へ配置する
 - ユーザーが音声や入力で指定した開始時刻はkeepのoriginalTimeとproposedTimeへそのまま反映する
 - 時刻指定がある予定を、負荷だけを理由に別時刻へ移動・延期しない
 - 時刻未定で移動可能な作業は、空き時間へ配置するかrescheduleへ入れる

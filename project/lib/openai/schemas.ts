@@ -141,6 +141,8 @@ export const CalendarEventSchema = z.object({
   endTime: z.string(),
   movable: z.boolean(),
   importance: z.enum(["high", "medium", "low"]),
+  allDay: z.boolean().optional(),
+  busy: z.boolean().optional(),
 });
 
 export const TaskExtractionRequestSchema = z.object({

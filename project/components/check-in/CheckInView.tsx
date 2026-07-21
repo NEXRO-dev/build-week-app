@@ -15,6 +15,7 @@ import {
   Trash2,
   X,
 } from "lucide-react";
+import Image from "next/image";
 import { useEffect, useState } from "react";
 
 import {
@@ -350,9 +351,19 @@ export function CheckInView(props: CheckInViewProps) {
   return (
     <div>
       <header className="flex h-16 items-center justify-between border-b border-[#ececf3] px-5 pt-[env(safe-area-inset-top)]">
-        <button type="button" className="flex items-center gap-2 text-lg font-bold" aria-label="Echly ホーム">
-          <span className="echly-logo" aria-hidden="true"><i /><i /><i /></span>
-          Echly
+        <button
+          type="button"
+          className="flex h-11 items-center"
+          aria-label={t("Echly ホーム", "Echly home")}
+        >
+          <Image
+            src="/echly-logo.png"
+            alt="Echly"
+            width={1153}
+            height={385}
+            priority
+            className="h-7 w-auto object-contain"
+          />
         </button>
         <NotificationBell timeZone={timeZone} />
       </header>

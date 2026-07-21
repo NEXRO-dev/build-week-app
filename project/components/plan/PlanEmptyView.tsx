@@ -8,11 +8,13 @@ import {
   type PlanActivityInput,
 } from "@/components/plan/PlanActivityForm";
 import { useI18n } from "@/lib/i18n";
-import type { ExtractedTask } from "@/types/echly";
+import type { CalendarEvent, ExtractedTask } from "@/types/echly";
 
 type Props = {
   targetDate: string | null;
   tasks: ExtractedTask[];
+  calendarEvents: CalendarEvent[];
+  calendarLoading: boolean;
   hasTodayCondition: boolean;
   processingStage: string | null;
   error: string | null;
@@ -33,6 +35,8 @@ function displayDate(targetDate: string | null, isEnglish: boolean) {
 export function PlanEmptyView({
   targetDate,
   tasks,
+  calendarEvents,
+  calendarLoading,
   hasTodayCondition,
   processingStage,
   error,
@@ -40,6 +44,7 @@ export function PlanEmptyView({
   onAddActivity,
 }: Props) {
   const { isEnglish, t } = useI18n();
+  const activityCount = tasks.length + calendarEvents.length;
 
   return (
     <div>
@@ -62,12 +67,34 @@ export function PlanEmptyView({
             </h2>
           </div>
           <span className="text-2xl font-bold tabular-nums text-[#5b42ff]">
-            {tasks.length}
+            {calendarLoading ? "…" : activityCount}
           </span>
         </div>
 
-        {tasks.length ? (
+        {activityCount ? (
           <div className="divide-y divide-[#eceef3]">
+            {calendarEvents.map((event) => (
+              <div key={`google-${event.id}`} className="flex min-w-0 items-center gap-3 py-3">
+                <span className="grid size-8 shrink-0 place-items-center text-[#4285f4]">
+                  <CalendarDays size={17} />
+                </span>
+                <div className="min-w-0 flex-1">
+                  <div className="flex min-w-0 items-center gap-2">
+                    <p className="min-w-0 flex-1 break-words text-sm font-semibold text-[#303857]">
+                      {event.title === "Busy" ? t("予定あり", "Busy") : event.title}
+                    </p>
+                    <span className="shrink-0 rounded bg-[#eef4ff] px-1.5 py-0.5 text-[9px] font-bold text-[#3167b7]">
+                      Google
+                    </span>
+                  </div>
+                  <p className="mt-0.5 text-xs text-[#737b99]">
+                    {event.allDay
+                      ? t("終日", "All day")
+                      : `${event.startTime} - ${event.endTime}`}
+                  </p>
+                </div>
+              </div>
+            ))}
             {tasks.map((task) => (
               <div key={task.id} className="flex min-w-0 items-center gap-3 py-3">
                 <span className="grid size-8 shrink-0 place-items-center text-[#5b42ff]">
@@ -95,13 +122,13 @@ export function PlanEmptyView({
 
         <div className="mt-3">
           <PlanActivityForm
-            defaultOpen={!tasks.length}
+            defaultOpen={!activityCount}
             disabled={Boolean(processingStage)}
             onAdd={onAddActivity}
           />
         </div>
 
-        {tasks.length ? (
+        {activityCount ? (
           <div className="mt-5 border-t border-[#e7e8f0] pt-5">
             <div className="flex items-start gap-3 text-xs leading-5 text-[#68708f]">
               <Sparkles size={17} className="mt-0.5 shrink-0 text-[#5b42ff]" />
@@ -130,7 +157,7 @@ export function PlanEmptyView({
           variant="primary"
           size="lg"
           fullWidth
-          isDisabled={!tasks.length || Boolean(processingStage)}
+          isDisabled={!activityCount || calendarLoading || Boolean(processingStage)}
           onPress={onCreatePlan}
           className="mt-5 h-12 bg-[#5b42ff] text-white"
         >

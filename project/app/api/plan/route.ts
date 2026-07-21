@@ -19,7 +19,7 @@ export async function POST(request: Request) {
 
     const input = PlanRequestSchema.parse(await request.json());
     const tomorrowTasks = input.tasks.filter(isTomorrowActionableTask);
-    if (!tomorrowTasks.length) {
+    if (!tomorrowTasks.length && !input.calendarEvents.length) {
       return Response.json(
         { code: "NO_TOMORROW_TASKS", error: "明日の予定がありません。" },
         { status: 400 },
@@ -40,6 +40,7 @@ export async function POST(request: Request) {
         { condition: input.condition, ...generated },
         tomorrowTasks,
         input.locale,
+        input.calendarEvents,
       );
       const plan = applySpokenTimesToPlan(completed, tomorrowTasks);
       return Response.json({ plan, generationSource: "cloudflare" });
@@ -48,6 +49,7 @@ export async function POST(request: Request) {
         tomorrowTasks,
         input.condition,
         input.locale,
+        input.calendarEvents,
       );
       const plan = applySpokenTimesToPlan(fallback, tomorrowTasks);
       return Response.json({ plan, generationSource: "fallback" });

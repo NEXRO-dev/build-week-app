@@ -55,6 +55,7 @@ Echlyは「状態を測る」だけでなく、「明日何を守り、何を動
 - A review and approval screen before consequential actions
 - Daily history with transcripts, extracted tasks, workload details, and trend charts
 - Google OAuth and email/password authentication with Better Auth
+- Google Calendar import for the target day, conflict-aware planning, and synchronization of confirmed schedules
 - Per-user persistence in Turso without storing raw audio recordings
 - Automatic browser-language detection plus manual Japanese/English switching
 - PWA support, an 8:00 PM local-time Web Push reminder, and a conditional 11:30 PM follow-up when the daily check-in is incomplete
@@ -72,6 +73,7 @@ Echlyは「状態を測る」だけでなく、「明日何を守り、何を動
 - 重要な操作前に内容を確認する承認画面
 - 文字起こし、抽出タスク、負荷詳細、推移グラフを確認できる日別履歴
 - Better AuthによるGoogle OAuthおよびメール／パスワード認証
+- 対象日のGoogle Calendar予定の読み込み、重複を避けたプラン作成、確定予定のカレンダー同期
 - Tursoへのユーザー別データ保存。生の録音音声は保存しない
 - 端末言語の自動判定と日本語／英語の手動切替
 - PWA対応、現地時刻20:00のWeb Push通知、未完了時のみ23:30に送る再通知
@@ -234,6 +236,11 @@ http://localhost:3000/api/auth/callback/google
 
 Use the deployed origin instead of `http://localhost:3000` in production.
 
+Enable the Google Calendar API in the same Google Cloud project, then add
+`https://www.googleapis.com/auth/calendar.events` to the OAuth consent screen.
+Echly requests this permission incrementally only when the user selects
+**Connect** for Google Calendar in Settings.
+
 ### 日本語
 
 前提:
@@ -247,6 +254,8 @@ Use the deployed origin instead of `http://localhost:3000` in production.
 上記コマンドで依存関係をインストールし、セッション用シークレットを生成します。環境変数の設定後に `npx auth@latest migrate` を実行してください。Echly固有のテーブルは、認証済みワークスペースへの初回アクセス時に自動作成・更新されます。
 
 ローカルではGoogle OAuthのリダイレクトURIに `http://localhost:3000/api/auth/callback/google` を登録し、本番ではデプロイ先のオリジンへ置き換えます。
+
+同じGoogle CloudプロジェクトでGoogle Calendar APIを有効化し、OAuth同意画面へ `https://www.googleapis.com/auth/calendar.events` スコープを追加してください。この権限は通常のGoogleログイン時には要求せず、設定画面でGoogle Calendarの「連携する」を選択した時だけ追加で要求します。
 
 ## 8. Configuration（環境変数）
 
@@ -493,7 +502,6 @@ The code is organized primarily by product capability. UI components are separat
 
 ### English
 
-- Apply approved changes through the Google Calendar API
 - Save approved drafts through the Gmail API without automatic sending
 - Add audit logs for approvals and external execution results
 - Let users correct workload results and use that feedback to improve suggestions
@@ -504,7 +512,6 @@ The code is organized primarily by product capability. UI components are separat
 
 ### 日本語
 
-- Google Calendar APIによる、承認済み予定変更と休息ブロックの反映
 - 承認操作と外部反映結果の監査ログ
 - ユーザーによる負荷判定の訂正と提案改善へのフィードバック
 - 個人ベースラインの長期変化と予定密度の関係の可視化

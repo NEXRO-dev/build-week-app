@@ -27,10 +27,16 @@ import {
   type EditablePlanItemKind,
 } from "@/lib/plan/editPlanTime";
 import { normalizeClockTime } from "@/lib/tasks/time";
-import type { ApprovalStatus, PlanRecord, TomorrowPlan } from "@/types/echly";
+import type {
+  ApprovalStatus,
+  CalendarEvent,
+  PlanRecord,
+  TomorrowPlan,
+} from "@/types/echly";
 
 type Props = {
   plan: TomorrowPlan;
+  calendarEvents: CalendarEvent[];
   targetDate: string | null;
   generationSource: PlanRecord["generationSource"] | null;
   approvalStatus: ApprovalStatus;
@@ -48,8 +54,9 @@ type TimelineItem = {
   time: string;
   end?: string | null;
   title: string;
-  kind: EditablePlanItemKind;
+  kind: EditablePlanItemKind | "google";
   detail: string;
+  allDay?: boolean;
 };
 
 type PositionedTimelineItem = {
@@ -72,6 +79,7 @@ const tone = {
   move: "border-[#78afe0] bg-[#f2f8ff] text-[#315f9f]",
   rest: "border-[#a894f5] bg-[#f6f3ff] text-[#5c43cb]",
   reschedule: "border-[#ef7898] bg-[#fff4f7] text-[#c9335d] border-dashed",
+  google: "border-[#4285f4] bg-[#eef4ff] text-[#315f9f]",
 };
 
 const TIMELINE_SLOT_MINUTES = 30;
@@ -99,8 +107,21 @@ function slotFor(time: string) {
   return value === null ? null : clock(Math.floor(value / 30) * 30);
 }
 
-function timeline(plan: TomorrowPlan, isEnglish: boolean): TimelineItem[] {
+function timeline(
+  plan: TomorrowPlan,
+  calendarEvents: CalendarEvent[],
+  isEnglish: boolean,
+): TimelineItem[] {
   return [
+    ...calendarEvents.map((event) => ({
+      id: event.id,
+      time: event.startTime,
+      end: event.endTime,
+      title: event.title === "Busy" ? (isEnglish ? "Busy" : "予定あり") : event.title,
+      kind: "google" as const,
+      detail: isEnglish ? "Google Calendar" : "Google Calendarの予定",
+      allDay: event.allDay,
+    })),
     ...plan.keep.map((item) => ({
       id: item.id,
       time: item.proposedTime ?? item.originalTime ?? (isEnglish ? "TBD" : "未定"),
@@ -216,6 +237,7 @@ function formatTargetDate(targetDate: string | null, isEnglish: boolean) {
 
 export function PlanView({
   plan,
+  calendarEvents,
   targetDate,
   generationSource,
   approvalStatus,
@@ -228,28 +250,48 @@ export function PlanView({
   onConfirm,
 }: Props) {
   const { isEnglish, t } = useI18n();
-  const items = useMemo(() => timeline(plan, isEnglish), [isEnglish, plan]);
+  const items = useMemo(
+    () => timeline(plan, calendarEvents, isEnglish),
+    [calendarEvents, isEnglish, plan],
+  );
+  const allDayItems = useMemo(
+    () => items.filter((item) => item.allDay),
+    [items],
+  );
+  const timedItems = useMemo(
+    () => items.filter((item) => !item.allDay),
+    [items],
+  );
   const deferred = useMemo(
     () => rescheduledItems(plan, isEnglish),
     [isEnglish, plan],
   );
-  const slots = useMemo(() => timeSlots(items), [items]);
-  const positionedItems = useMemo(() => positionedTimelineItems(items), [items]);
+  const slots = useMemo(() => timeSlots(timedItems), [timedItems]);
+  const positionedItems = useMemo(
+    () => positionedTimelineItems(timedItems),
+    [timedItems],
+  );
   const dragRef = useRef<DragSession | null>(null);
   const scheduleRef = useRef<HTMLDivElement | null>(null);
   const [draggingItem, setDraggingItem] = useState<TimelineItem | null>(null);
   const [dragTarget, setDragTarget] = useState<string | null>(null);
   const [pointerPosition, setPointerPosition] = useState<{ x: number; y: number } | null>(null);
 
-  const unscheduled = [...items.filter((item) => !slotFor(item.time)), ...deferred];
+  const unscheduled = [
+    ...timedItems.filter((item) => !slotFor(item.time)),
+    ...deferred,
+  ];
   function changeTime(item: TimelineItem, time: string) {
+    if (item.kind === "google") return;
     onPlanChange(movePlanItemToTime(plan, item.id, item.kind, time));
   }
 
   function beginDrag(event: ReactPointerEvent<HTMLButtonElement>, item: TimelineItem) {
+    if (item.kind === "google") return;
     if (event.pointerType === "mouse" && event.button !== 0) return;
     event.preventDefault();
     const pointerId = event.pointerId;
+    const itemKind = item.kind;
 
     function cleanup() {
       window.removeEventListener("pointermove", updateDrag);
@@ -286,7 +328,7 @@ export function PlanView({
       setDragTarget(null);
       setPointerPosition(null);
       if (targetTime) {
-        onPlanChange(movePlanItemToTime(plan, item.id, item.kind, targetTime));
+        onPlanChange(movePlanItemToTime(plan, item.id, itemKind, targetTime));
       }
     }
 
@@ -319,33 +361,49 @@ export function PlanView({
         }`}
       >
         <div className="flex min-w-0 items-start gap-1.5">
-          <button
-            type="button"
-            aria-label={`${item.title}${t("の時刻を移動", " time: drag to move")}`}
-            title={t("ドラッグして時刻を変更", "Drag to change time")}
-            className="mt-0.5 grid size-7 shrink-0 touch-none place-items-center text-current/70 active:cursor-grabbing"
-            onPointerDown={(event) => beginDrag(event, item)}
-          >
-            <GripVertical size={16} />
-          </button>
+          {item.kind === "google" ? (
+            <span className="mt-0.5 grid size-7 shrink-0 place-items-center text-[#4285f4]">
+              <CalendarDays size={16} />
+            </span>
+          ) : (
+            <button
+              type="button"
+              aria-label={`${item.title}${t("の時刻を移動", " time: drag to move")}`}
+              title={t("ドラッグして時刻を変更", "Drag to change time")}
+              className="mt-0.5 grid size-7 shrink-0 touch-none place-items-center text-current/70 active:cursor-grabbing"
+              onPointerDown={(event) => beginDrag(event, item)}
+            >
+              <GripVertical size={16} />
+            </button>
+          )}
           <div className="min-w-0 flex-1">
             <p className={`break-words text-xs font-bold leading-5${item.kind === "reschedule" ? " line-through" : ""}`}>
               {item.title}
             </p>
             <p className="mt-0.5 break-words text-[10px] leading-4 text-[#56607d]">
-              {item.end && normalizedTime ? `${normalizedTime} - ${item.end}` : item.detail}
+              {item.allDay
+                ? t("終日 · Google Calendar", "All day · Google Calendar")
+                : item.end && normalizedTime
+                  ? `${normalizedTime} - ${item.end}`
+                  : item.detail}
             </p>
           </div>
-          <label className="flex shrink-0 items-center text-[#56607d]">
-            <span className="sr-only">{item.title}{t("の開始時刻", " start time")}</span>
-            <input
-              type="time"
-              step={1800}
-              value={normalizedTime}
-              onInput={(event) => changeTime(item, event.currentTarget.value)}
-              className="w-[92px] bg-transparent text-[11px] font-semibold tabular-nums outline-none"
-            />
-          </label>
+          {item.kind === "google" ? (
+            <span className="shrink-0 rounded bg-white/70 px-1.5 py-0.5 text-[9px] font-bold text-[#3167b7]">
+              Google
+            </span>
+          ) : (
+            <label className="flex shrink-0 items-center text-[#56607d]">
+              <span className="sr-only">{item.title}{t("の開始時刻", " start time")}</span>
+              <input
+                type="time"
+                step={1800}
+                value={normalizedTime}
+                onInput={(event) => changeTime(item, event.currentTarget.value)}
+                className="w-[92px] bg-transparent text-[11px] font-semibold tabular-nums outline-none"
+              />
+            </label>
+          )}
         </div>
       </article>
     );
@@ -382,6 +440,15 @@ export function PlanView({
             onAdd={onAddActivity}
           />
         </div>
+
+        {allDayItems.length ? (
+          <section className="mt-4">
+            <h2 className="mb-2 text-xs font-bold">{t("終日の予定", "All-day activities")}</h2>
+            <div className="space-y-2">
+              {allDayItems.map((item) => renderCard(item))}
+            </div>
+          </section>
+        ) : null}
 
         <section className="mt-4">
           <h2 className="mb-2 text-xs font-bold">{t("タイムライン", "Timeline")}</h2>
