@@ -1,7 +1,7 @@
 import type { NextConfig } from "next";
 
 const buildTimestamp = new Date().toISOString();
-const appVersion = process.env.npm_package_version?.trim() || "0.2.1";
+const appVersion = process.env.npm_package_version?.trim() || "0.3.1";
 
 const nextConfig: NextConfig = {
   env: {
