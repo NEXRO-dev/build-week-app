@@ -210,6 +210,15 @@ export function CheckInView(props: CheckInViewProps) {
     (total, entry) => total + entry.tasks.filter(isTomorrowActionableTask).length,
     0,
   );
+  const previousConditionLabel = previousCondition
+    ? isEnglish
+      ? previousCondition.level === "high"
+        ? "High"
+        : previousCondition.level === "caution"
+          ? "Elevated"
+          : "Normal"
+      : previousCondition.label
+    : null;
 
   useEffect(() => {
     if (reflectionStatus !== "available") return;
@@ -370,14 +379,14 @@ export function CheckInView(props: CheckInViewProps) {
 
       <div className="px-5 pb-8 pt-5">
         <h1 className="text-[20px] font-bold leading-7">{isEnglish ? "Welcome back, " + greetingName : "おつかれさまです、" + greetingName + greetingSuffix}</h1>
-        <p className="mt-1 text-xs text-[#606985]">{todayLabel}・{timeZone}</p>
+        <p className="mt-1 text-xs text-[#606985]">{todayLabel} · {timeZone}</p>
 
         <section className="mt-5 flex min-w-0 items-center gap-3 rounded-lg border border-[#e4e6ef] p-4">
           <span className="grid size-11 shrink-0 place-items-center rounded-full bg-[#eff4ff] text-[#4266e8]"><Activity size={21} /></span>
           <div className="min-w-0">
             <p className="text-xs font-medium text-[#626b89]">{t("直近の状態", "Latest status")}</p>
             <p className="mt-1 text-sm font-bold">
-              {previousCondition?.score !== undefined ? `${previousCondition.score}/100・${previousCondition.label}` : t("まだ記録がありません", "No records yet")}
+              {previousCondition?.score !== undefined ? `${previousCondition.score}/100 · ${previousConditionLabel}` : t("まだ記録がありません", "No records yet")}
             </p>
           </div>
         </section>
@@ -407,7 +416,7 @@ export function CheckInView(props: CheckInViewProps) {
             <p className="border-t border-[#eceef6] bg-[#f8f9fd] px-4 py-2.5 text-xs leading-5 text-[#59617d]">{t("各ステップの入力を別々に保持し、最後にまとめて解析します。", "Each step is kept separately and analyzed together at the end.")}</p>
           </section>
         ) : (
-        <div className="mt-5 grid grid-cols-2 rounded-lg bg-[#f1f2f7] p-1" role="tablist" aria-label="入力する内容">
+        <div className="mt-5 grid grid-cols-2 rounded-lg bg-[#f1f2f7] p-1" role="tablist" aria-label={t("入力する内容", "Check-in type")}>
           <button
             type="button"
             role="tab"
@@ -456,7 +465,7 @@ export function CheckInView(props: CheckInViewProps) {
           {mode === "reflection" && reflectionStatus === "completed" ? (
             <div className="flex items-center gap-3 border-t border-[#eceef6] px-4 py-5">
               <span className="grid size-10 shrink-0 place-items-center rounded-full bg-[#eaf8f2] text-[#23966f]"><Check size={20} /></span>
-              <div><p className="text-sm font-bold">{t("今日の振り返りは完了しました", "Today's reflection is complete")}</p><p className="mt-1 text-xs text-[#68708f]">{reflectionCompletedAt ? `${reflectionCompletedAt}に記録` : "1日1回の記録済み"}</p></div>
+              <div><p className="text-sm font-bold">{t("今日の振り返りは完了しました", "Today's reflection is complete")}</p><p className="mt-1 text-xs text-[#68708f]">{reflectionCompletedAt ? t(`${reflectionCompletedAt}に記録`, `Recorded at ${reflectionCompletedAt}`) : t("1日1回の記録済み", "Daily check-in recorded")}</p></div>
             </div>
           ) : null}
         </section>
@@ -512,7 +521,7 @@ export function CheckInView(props: CheckInViewProps) {
         {mode === "planning" && !combinedCheckInAvailable ? (
           <section className="mt-5 border-t border-[#e7e8f0] pt-5">
             <div className="flex items-center justify-between gap-3">
-              <div><h2 className="text-sm font-bold">{t("追加済みの明日の予定", "Tomorrow's saved plans")}</h2><p className="mt-1 text-xs text-[#68708f]">{tomorrowTaskCount}件</p></div>
+              <div><h2 className="text-sm font-bold">{t("追加済みの明日の予定", "Tomorrow's saved plans")}</h2><p className="mt-1 text-xs text-[#68708f]">{t(`${tomorrowTaskCount}件`, `${tomorrowTaskCount} ${tomorrowTaskCount === 1 ? "item" : "items"}`)}</p></div>
               {tomorrowTaskCount > 0 ? <Button size="sm" variant="primary" onPress={onCreatePlan} isDisabled={Boolean(processingStage)} className="bg-[#5b42ff] text-white">{t("プランを作る", "Create plan")}</Button> : null}
             </div>
             {scheduleEntries.length ? (

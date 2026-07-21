@@ -4,7 +4,7 @@ import { ArrowLeft, ChevronDown, List, Plus, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
 import { useI18n } from "@/lib/i18n";
-import type { CheckIn, ConditionLevel, HistoryTranscriptEntry } from "@/types/echly";
+import type { CheckIn, ConditionLevel, ConditionSignal, HistoryTranscriptEntry } from "@/types/echly";
 
 type Props = {
   checkIns: CheckIn[];
@@ -20,6 +20,7 @@ type ChartRange = 7 | 30;
 const score: Record<ConditionLevel, number> = { normal: 36, caution: 58, high: 82 };
 const DAY_MS = 24 * 60 * 60 * 1000;
 const CHART = { left: 45, right: 326, top: 12, bottom: 130 } as const;
+const CHART_DATA_LEFT_INSET = 8;
 
 function loadScore(item: CheckIn) {
   return item.condition.score ?? score[item.condition.level];
@@ -61,6 +62,34 @@ function dayLabel(value: string, isEnglish: boolean) {
   }).format(date);
 }
 
+function conditionLabel(condition: ConditionSignal, isEnglish: boolean) {
+  if (!isEnglish) return condition.label;
+  return condition.level === "high"
+    ? "High"
+    : condition.level === "caution"
+      ? "Elevated"
+      : "Normal";
+}
+
+function conditionSummary(condition: ConditionSignal, isEnglish: boolean) {
+  if (!isEnglish) return condition.summary;
+  return condition.level === "high"
+    ? "Your load was high. Reducing flexible commitments and protecting recovery time was recommended."
+    : condition.level === "caution"
+      ? "Your load was elevated. Keeping essential commitments and leaving room to recover was recommended."
+      : "Your load was in a low-to-normal range. Keeping some open space was recommended.";
+}
+
+function conditionEvidence(condition: ConditionSignal, isEnglish: boolean) {
+  if (!isEnglish) return condition.evidence;
+  return [
+    "Based on the self-assessment from this check-in",
+    condition.confidence === "standard"
+      ? "Compared with the personal voice baseline"
+      : "The personal voice baseline was still being established",
+  ];
+}
+
 export function HistoryView({
   checkIns,
   historyTranscripts,
@@ -85,21 +114,23 @@ export function HistoryView({
     if (!saved || item.createdAt > saved.createdAt) measuredByDate.set(key, item);
   }
   const chartEndDate = [...measuredByDate.keys()].sort().at(-1);
-  const chartStartDate = chartEndDate
+  const chartWindowStartDate = chartEndDate
     ? offsetDateKey(chartEndDate, -(chartRange - 1))
     : undefined;
-  const chartItems = chartStartDate && chartEndDate
+  const chartItems = chartWindowStartDate && chartEndDate
     ? [...measuredByDate.entries()]
-        .filter(([key]) => key >= chartStartDate && key <= chartEndDate)
+        .filter(([key]) => key >= chartWindowStartDate && key <= chartEndDate)
         .sort(([left], [right]) => left.localeCompare(right))
     : [];
-  const chartWidth = CHART.right - CHART.left;
+  const chartStartDate = chartItems[0]?.[0];
+  const chartDataLeft = CHART.left + CHART_DATA_LEFT_INSET;
+  const chartWidth = CHART.right - chartDataLeft;
   const chartHeight = CHART.bottom - CHART.top;
   const chartPoints = chartItems.map(([key, item]) => {
     const dayOffset = chartStartDate
       ? (dateKeyToTime(key) - dateKeyToTime(chartStartDate)) / DAY_MS
       : 0;
-    const x = CHART.left + (dayOffset / Math.max(1, chartRange - 1)) * chartWidth;
+    const x = chartDataLeft + (dayOffset / Math.max(1, chartRange - 1)) * chartWidth;
     const value = Math.max(0, Math.min(100, loadScore(item)));
     const y = CHART.top + ((100 - value) / 100) * chartHeight;
     return { x, y, value, key };
@@ -276,17 +307,17 @@ export function HistoryView({
                   <p className="text-[10px] text-white/65">{t("負荷スコア", "Load score")}</p>
                   <p className="mt-1 text-3xl font-bold">{typeof selectedCheckIn?.condition.score === "number" ? selectedCheckIn.condition.score : "—"}<span className="text-xs font-medium text-white/65">/100</span></p>
                 </div>
-                <span className="rounded-full bg-white/12 px-3 py-1 text-[10px] font-bold">{selectedCheckIn?.condition.label ?? t("予定・タスク", "Plans and tasks")}</span>
+                <span className="rounded-full bg-white/12 px-3 py-1 text-[10px] font-bold">{selectedCheckIn ? conditionLabel(selectedCheckIn.condition, isEnglish) : t("予定・タスク", "Plans and tasks")}</span>
               </div>
             </section>
 
             {selectedCheckIn ? <section className="rounded-lg border border-[#e3e5ef] p-4">
               <h2 className="text-xs font-bold">{t("算出結果", "Result")}</h2>
-              <p className="mt-3 text-xs leading-6 text-[#535c79]">{selectedCheckIn.condition.summary}</p>
+              <p className="mt-3 text-xs leading-6 text-[#535c79]">{conditionSummary(selectedCheckIn.condition, isEnglish)}</p>
               {selectedCheckIn.condition.components ? <p className="mt-2 text-[10px] text-[#737b96]">Raw TLX: {selectedCheckIn.condition.components.rawTlx}/100</p> : null}
-              {selectedCheckIn.condition.evidence.length ? (
+              {conditionEvidence(selectedCheckIn.condition, isEnglish).length ? (
                 <ul className="mt-3 list-disc space-y-1 pl-4 text-[11px] leading-5 text-[#535c79]">
-                  {selectedCheckIn.condition.evidence.map((evidence, index) => <li key={`${selectedCheckIn.id}-detail-evidence-${index}`}>{evidence}</li>)}
+                  {conditionEvidence(selectedCheckIn.condition, isEnglish).map((evidence, index) => <li key={`${selectedCheckIn.id}-detail-evidence-${index}`}>{evidence}</li>)}
                 </ul>
               ) : null}
             </section> : null}
@@ -402,7 +433,7 @@ export function HistoryView({
                               >
                                 <span className="min-w-0 flex-1">
                                   <span className="block text-xs font-bold">{dayLabel(itemDate, isEnglish)}</span>
-                                  <span className="mt-1 block truncate text-[10px] text-[#737b96]">{item?.condition.summary ?? t("予定・タスクの記録", "Plans and tasks recorded")}</span>
+                                  <span className="mt-1 block truncate text-[10px] text-[#737b96]">{item ? conditionSummary(item.condition, isEnglish) : t("予定・タスクの記録", "Plans and tasks recorded")}</span>
                                 </span>
                                 {typeof itemScore === "number" ? (
                                   <span className="shrink-0 rounded-full bg-[#fff0f5] px-2 py-1 text-[10px] font-bold text-[#d9366b]">
@@ -458,14 +489,17 @@ export function HistoryView({
                   : t("本人の過去音声と比べて、話す速さと間の変化を算出しています。", "Speech rate and pauses are compared with your own past recordings.")
                 : !voiceCurrentEligible
                   ? voiceEligibilityReason === "too_short"
-                    ? voiceMinimumDurationSec +
-                      "秒未満のため保存のみ行い、ベースラインには加えていません。"
-                    : "録音は保存しましたが、音声特徴を取得できなかったため参考記録です。"
+                    ? t(
+                        voiceMinimumDurationSec + "秒未満のため保存のみ行い、ベースラインには加えていません。",
+                        "This recording was saved but not added to the baseline because it was under " + voiceMinimumDurationSec + " seconds.",
+                      )
+                    : t("録音は保存しましたが、音声特徴を取得できなかったため参考記録です。", "The recording was saved as a reference, but voice features could not be measured.")
                   : voiceSamplesCollected >= voiceBaselineTarget
-                    ? "基準がそろいました。次回から取得できた特徴で個人内変化を算出します。"
-                    : "あと" +
-                      (voiceBaselineTarget - voiceSamplesCollected) +
-                      "件で個人内比較を開始します。"}
+                    ? t("基準がそろいました。次回から取得できた特徴で個人内変化を算出します。", "The baseline is ready. Personal changes will be calculated from the next eligible recording.")
+                    : t(
+                        "あと" + (voiceBaselineTarget - voiceSamplesCollected) + "件で個人内比較を開始します。",
+                        (voiceBaselineTarget - voiceSamplesCollected) + " more eligible " + (voiceBaselineTarget - voiceSamplesCollected === 1 ? "recording" : "recordings") + " needed to start personal comparisons.",
+                      )}
           </p>
         </section>
         <section className="rounded-lg border border-[#e3e5ef] p-4">
@@ -502,7 +536,7 @@ export function HistoryView({
             <line x1={CHART.left} y1={CHART.top} x2={CHART.left} y2={CHART.bottom} stroke="#aeb3c5" strokeWidth="1" />
             <line x1={CHART.left} y1={CHART.bottom} x2={CHART.right} y2={CHART.bottom} stroke="#aeb3c5" strokeWidth="1" />
             {xTicks.map(({ offset, label }) => {
-              const x = CHART.left + (offset / Math.max(1, chartRange - 1)) * chartWidth;
+              const x = chartDataLeft + (offset / Math.max(1, chartRange - 1)) * chartWidth;
               return (
                 <g key={offset}>
                   <line x1={x} y1={CHART.bottom} x2={x} y2={CHART.bottom + 4} stroke="#aeb3c5" strokeWidth="1" />
@@ -533,7 +567,7 @@ export function HistoryView({
         <section className="rounded-lg border border-[#e3e5ef] p-4">
           <h2 className="text-xs font-bold">{t("最新の算出結果", "Latest result")}</h2>
           {latest?.condition.score !== undefined ? <p className="mt-3 text-2xl font-bold">{latest.condition.score}<span className="text-xs">/100</span></p> : null}
-          <p className="mt-3 text-xs leading-5 text-[#535c79]">{latest?.condition.summary ?? t("まだ記録がありません。", "No records yet.")}</p>
+          <p className="mt-3 text-xs leading-5 text-[#535c79]">{latest ? conditionSummary(latest.condition, isEnglish) : t("まだ記録がありません。", "No records yet.")}</p>
         </section>
       </div>
     </div>

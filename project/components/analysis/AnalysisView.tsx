@@ -62,9 +62,11 @@ const waveformMinHeight = 6;
 const waveformMaxHeight = 52;
 type VoiceFeature = "speechRate" | "pauseRatio";
 
-function voiceFeatureDescription(features: VoiceFeature[]) {
-  if (features.length === 2) return "話速と間";
-  return features[0] === "pauseRatio" ? "間" : "話速";
+function voiceFeatureDescription(features: VoiceFeature[], isEnglish: boolean) {
+  if (features.length === 2) return isEnglish ? "speech rate and pauses" : "話速と間";
+  return features[0] === "pauseRatio"
+    ? isEnglish ? "pauses" : "間"
+    : isEnglish ? "speech rate" : "話速";
 }
 
 function scoreFor(level: ConditionLevel) { return level === "high" ? 72 : level === "caution" ? 58 : 34; }
@@ -249,26 +251,23 @@ export function AnalysisView({
         : voiceSamplesCollected + "/" + voiceBaselineTarget;
   const voiceStatusHint = hasVoiceDeviation
     ? voiceUsesSingleFeature
-      ? "過去" +
-        condition.components?.voiceBaselineCount +
-        "件と比べ、取得できた" +
-        voiceFeatureDescription(
-          voiceFeaturesUsed.length ? voiceFeaturesUsed : voiceFeaturesAvailable,
-        ) +
-        "のみで暫定算出しています。音声の重みは半分です。"
-      : "過去" +
-        condition.components?.voiceBaselineCount +
-        "件と比べた話速・間の変化です。"
+      ? isEnglish
+        ? `This preliminary result compares the available ${voiceFeatureDescription(voiceFeaturesUsed.length ? voiceFeaturesUsed : voiceFeaturesAvailable, true)} with ${condition.components?.voiceBaselineCount} past recordings. Voice has half weight.`
+        : "過去" + condition.components?.voiceBaselineCount + "件と比べ、取得できた" + voiceFeatureDescription(voiceFeaturesUsed.length ? voiceFeaturesUsed : voiceFeaturesAvailable, false) + "のみで暫定算出しています。音声の重みは半分です。"
+      : isEnglish
+        ? `Change in speech rate and pauses compared with ${condition.components?.voiceBaselineCount} past recordings.`
+        : "過去" + condition.components?.voiceBaselineCount + "件と比べた話速・間の変化です。"
     : !voiceCurrentEligible
       ? voiceEligibilityReason === "too_short"
-        ? voiceMinimumDurationSec +
-          "秒未満のため保存のみ行い、ベースラインには加えていません。"
-        : "録音は保存しましたが、話速と間を取得できなかったため参考記録です。"
+        ? isEnglish
+          ? `This recording was saved but not added to the baseline because it was under ${voiceMinimumDurationSec} seconds.`
+          : voiceMinimumDurationSec + "秒未満のため保存のみ行い、ベースラインには加えていません。"
+        : t("録音は保存しましたが、話速と間を取得できなかったため参考記録です。", "The recording was saved as a reference, but speech rate and pauses could not be measured.")
       : voiceSamplesCollected >= voiceBaselineTarget
-        ? "次回の録音から、取得できた特徴で個人内変化を算出します。"
-        : "あと" +
-          (voiceBaselineTarget - voiceSamplesCollected) +
-          "件で個人内比較を開始します。";
+        ? t("次回の録音から、取得できた特徴で個人内変化を算出します。", "Personal changes will be calculated from the next eligible recording.")
+        : isEnglish
+          ? `${voiceBaselineTarget - voiceSamplesCollected} more eligible ${voiceBaselineTarget - voiceSamplesCollected === 1 ? "recording" : "recordings"} needed to start personal comparisons.`
+          : "あと" + (voiceBaselineTarget - voiceSamplesCollected) + "件で個人内比較を開始します。";
   const calculationMetrics = condition.components
     ? [
         {

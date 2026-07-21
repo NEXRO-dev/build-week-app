@@ -10,6 +10,7 @@ import {
 } from "lucide-react";
 import { useEffect, useMemo } from "react";
 
+import { useI18n } from "@/lib/i18n";
 import type { TranscriptReview } from "@/types/echly";
 
 type Props = {
@@ -23,14 +24,20 @@ type Props = {
   onClose: () => void;
 };
 
-function qualityMessage(review: TranscriptReview) {
+function qualityMessage(review: TranscriptReview, isEnglish: boolean) {
   if (review.agreement !== null && review.agreement < 0.7) {
-    return "2つの音声認識結果に差があります。固有名詞・時刻・数字を特に確認してください。";
+    return isEnglish
+      ? "The two transcription results differ. Check names, times, and numbers carefully."
+      : "2つの音声認識結果に差があります。固有名詞・時刻・数字を特に確認してください。";
   }
   if (review.confidence !== null && review.confidence < 0.8) {
-    return "聞き取りにくい箇所がありました。音声を再生して確認してください。";
+    return isEnglish
+      ? "Some parts were difficult to recognize. Play the recording and check the transcript."
+      : "聞き取りにくい箇所がありました。音声を再生して確認してください。";
   }
-  return "認識結果を確認し、違う箇所があればそのまま書き換えてください。";
+  return isEnglish
+    ? "Review the transcript and edit anything that was recognized incorrectly."
+    : "認識結果を確認し、違う箇所があればそのまま書き換えてください。";
 }
 
 export function TranscriptReviewPanel({
@@ -43,6 +50,7 @@ export function TranscriptReviewPanel({
   onRetry,
   onClose,
 }: Props) {
+  const { isEnglish, t } = useI18n();
   const audioItems = useMemo(
     () => audioBlobs.map((item) => ({
       ...item,
@@ -61,7 +69,10 @@ export function TranscriptReviewPanel({
   const confidenceLabel =
     review.confidence === null
       ? null
-      : `認識確信度 ${Math.round(review.confidence * 100)}%`;
+      : t(
+          `認識確信度 ${Math.round(review.confidence * 100)}%`,
+          `Recognition confidence ${Math.round(review.confidence * 100)}%`,
+        );
 
   const alternatives = review.alternatives.filter(
     (alternative, index, items) =>
@@ -75,7 +86,7 @@ export function TranscriptReviewPanel({
         <header className="grid h-16 grid-cols-[44px_1fr_44px] items-center">
           <button
             type="button"
-            aria-label="文字起こしの確認を閉じる"
+            aria-label={t("文字起こしの確認を閉じる", "Close transcript review")}
             onClick={onClose}
             disabled={Boolean(processingStage)}
             className="grid size-11 place-items-center text-[#303857] disabled:opacity-40"
@@ -83,7 +94,7 @@ export function TranscriptReviewPanel({
             <ArrowLeft size={21} />
           </button>
           <p className="text-center text-sm font-bold text-[#303857]">
-            文字起こしを確認
+            {t("文字起こしを確認", "Review transcript")}
           </p>
         </header>
 
@@ -92,10 +103,10 @@ export function TranscriptReviewPanel({
             <Headphones size={23} />
           </span>
           <h1 className="mt-4 text-xl font-bold text-[#111735]">
-            AIに渡す前に確認してください
+            {t("AIに渡す前に確認してください", "Review before sending to AI")}
           </h1>
           <p className="mt-2 text-sm leading-6 text-[#68708f]">
-            {qualityMessage(review)}
+            {qualityMessage(review, isEnglish)}
           </p>
 
           {confidenceLabel ? (
@@ -123,7 +134,7 @@ export function TranscriptReviewPanel({
           {alternatives.length > 1 ? (
             <section className="mt-5">
               <p className="text-xs font-bold text-[#303857]">
-                2つの聞き取り候補
+                {t("2つの聞き取り候補", "Two transcription options")}
               </p>
               <div className="mt-2 divide-y divide-[#e7e8f0] border-y border-[#e7e8f0]">
                 {alternatives.map((alternative, index) => {
@@ -149,7 +160,7 @@ export function TranscriptReviewPanel({
                       </span>
                       <span className="min-w-0">
                         <span className="block text-[10px] font-bold text-[#737b99]">
-                          聞き取り候補 {index + 1}
+                          {t(`聞き取り候補 ${index + 1}`, `Option ${index + 1}`)}
                         </span>
                         <span className="mt-1 block text-sm leading-6 text-[#303857]">
                           {alternative.transcript}
@@ -165,7 +176,7 @@ export function TranscriptReviewPanel({
             htmlFor="transcript-review"
             className="mt-6 text-xs font-bold text-[#303857]"
           >
-            聞き取った内容
+            {t("聞き取った内容", "Transcript")}
           </label>
           <textarea
             id="transcript-review"
@@ -200,7 +211,7 @@ export function TranscriptReviewPanel({
               className="min-h-12 bg-[#5b42ff] text-white"
             >
               <Check size={18} />
-              この内容でAI処理へ
+              {t("この内容でAI処理へ", "Continue with this transcript")}
             </Button>
             <Button
               variant="outline"
@@ -209,7 +220,7 @@ export function TranscriptReviewPanel({
               className="min-h-11"
             >
               <RotateCcw size={17} />
-              録音し直す
+              {t("録音し直す", "Record again")}
             </Button>
           </div>
         </main>

@@ -128,7 +128,7 @@ function timeline(
       end: item.endTime,
       title: item.title,
       kind: "keep" as const,
-      detail: item.reason,
+      detail: isEnglish ? "Kept at the requested or protected time." : item.reason,
     })),
     ...plan.move.map((item) => ({
       id: item.id,
@@ -136,7 +136,7 @@ function timeline(
       end: item.endTime,
       title: item.title,
       kind: "move" as const,
-      detail: item.reason,
+      detail: isEnglish ? "Placed in an available time block." : item.reason,
     })),
     ...plan.restBlocks.map((item) => ({
       id: item.id,
@@ -144,7 +144,7 @@ function timeline(
       end: item.endTime,
       title: isEnglish ? "Rest block" : "休息時間",
       kind: "rest" as const,
-      detail: item.reason,
+      detail: isEnglish ? "Recovery time protected between activities." : item.reason,
     })),
   ].sort(
     (first, second) =>
@@ -235,6 +235,18 @@ function formatTargetDate(targetDate: string | null, isEnglish: boolean) {
   }).format(new Date(`${targetDate}T00:00:00`));
 }
 
+function conditionSummary(plan: TomorrowPlan, isEnglish: boolean) {
+  if (!isEnglish) return plan.condition.summary;
+  if (plan.condition.confidence === "limited" && plan.condition.components?.workloadWeight === 0) {
+    return "Today's check-in is not available, so this plan uses schedule information only.";
+  }
+  return plan.condition.level === "high"
+    ? "Your load looks high today. Reduce flexible commitments and protect recovery time tomorrow."
+    : plan.condition.level === "caution"
+      ? "Your load looks elevated. Keep essential commitments and leave room to recover."
+      : "Your load is in a low-to-normal range. Keep some open space in tomorrow's plan.";
+}
+
 export function PlanView({
   plan,
   calendarEvents,
@@ -249,7 +261,7 @@ export function PlanView({
   onRegenerate,
   onConfirm,
 }: Props) {
-  const { isEnglish, t } = useI18n();
+  const { locale, isEnglish, t } = useI18n();
   const items = useMemo(
     () => timeline(plan, calendarEvents, isEnglish),
     [calendarEvents, isEnglish, plan],
@@ -266,6 +278,15 @@ export function PlanView({
     () => rescheduledItems(plan, isEnglish),
     [isEnglish, plan],
   );
+  const rationale = isEnglish
+    ? [
+        "Times explicitly provided in the check-in are kept unchanged.",
+        "Each saved activity appears once in the plan.",
+        plan.condition.level === "high"
+          ? "Flexible, lower-priority work is deferred to protect recovery time."
+          : "Flexible work is placed around fixed commitments and breaks.",
+      ]
+    : plan.rationale;
   const slots = useMemo(() => timeSlots(timedItems), [timedItems]);
   const positionedItems = useMemo(
     () => positionedTimelineItems(timedItems),
@@ -283,7 +304,7 @@ export function PlanView({
   ];
   function changeTime(item: TimelineItem, time: string) {
     if (item.kind === "google") return;
-    onPlanChange(movePlanItemToTime(plan, item.id, item.kind, time));
+    onPlanChange(movePlanItemToTime(plan, item.id, item.kind, time, locale));
   }
 
   function beginDrag(event: ReactPointerEvent<HTMLButtonElement>, item: TimelineItem) {
@@ -328,7 +349,7 @@ export function PlanView({
       setDragTarget(null);
       setPointerPosition(null);
       if (targetTime) {
-        onPlanChange(movePlanItemToTime(plan, item.id, itemKind, targetTime));
+        onPlanChange(movePlanItemToTime(plan, item.id, itemKind, targetTime, locale));
       }
     }
 
@@ -423,7 +444,7 @@ export function PlanView({
         <div className="flex items-start justify-between gap-3 border-b border-[#e7e8f0] pb-4">
           <div className="min-w-0">
             <p className="text-xs font-semibold text-[#68708f]">{formatTargetDate(targetDate, isEnglish)}</p>
-            <p className="mt-1 break-words text-sm font-bold text-[#303857]">{plan.condition.summary}</p>
+            <p className="mt-1 break-words text-sm font-bold text-[#303857]">{conditionSummary(plan, isEnglish)}</p>
           </div>
           <span className="shrink-0 rounded-md bg-[#f1efff] px-2 py-1 text-[10px] font-bold text-[#5b42ff]">
             {approvalStatus === "approved"
@@ -504,14 +525,14 @@ export function PlanView({
           </section>
         ) : null}
 
-        {plan.rationale.length ? (
+        {rationale.length ? (
           <section className="mt-5 border-t border-[#e7e8f0] pt-4">
             <h2 className="flex items-center gap-2 text-xs font-bold">
               <Sparkles size={15} className="text-[#5b42ff]" />
               {t("この組み方の理由", "Why this plan")}
             </h2>
             <ul className="mt-3 space-y-2">
-              {plan.rationale.map((reason, index) => (
+              {rationale.map((reason, index) => (
                 <li key={`${index}-${reason}`} className="flex gap-2 text-xs leading-5 text-[#5f6784]">
                   <CheckCircle2 size={14} className="mt-0.5 shrink-0 text-[#29ae7d]" />
                   <span className="min-w-0 break-words">{reason}</span>

@@ -8,7 +8,7 @@ import type {
   TemporalContext,
   TomorrowPlan,
 } from "@/types/echly";
-import { normalizeClockTime } from "@/lib/tasks/time";
+import { normalizeClockTime } from "../tasks/time.ts";
 
 export const SAMPLE_TRANSCRIPT =
   "明日は10時にA社の予算会議。午後は資料の仕上げ、17時からCさんとブレスト。でも、今日はほとんど寝てなくて、正直もう頭が回らない。";
@@ -17,7 +17,37 @@ export const SAMPLE_TRANSCRIPT_EN =
 
 const DISCLAIMER = "診断ではなく、音声と発話内容からの推定です。";
 
-function inferCondition(transcript: string): AnalysisResult["condition"] {
+function inferCondition(transcript: string, isEnglish: boolean): AnalysisResult["condition"] {
+  if (isEnglish) {
+    const normalized = transcript.toLowerCase();
+    const highWords = ["barely slept", "no sleep", "can't focus", "cannot focus", "overwhelmed"];
+    const cautionWords = ["tired", "anxious", "sleepy", "stressed", "rushed"];
+    const highEvidence = highWords.filter((word) => normalized.includes(word));
+    const cautionEvidence = cautionWords.filter((word) => normalized.includes(word));
+    const level: ConditionLevel = highEvidence.length
+      ? "high"
+      : cautionEvidence.length
+        ? "caution"
+        : "normal";
+    return {
+      level,
+      label: level === "high" ? "High" : level === "caution" ? "Elevated" : "Normal",
+      summary:
+        level === "high"
+          ? "Protect recovery time first and reduce flexible commitments."
+          : level === "caution"
+            ? "Keep essential commitments and leave room to recover."
+            : "No strong signs of elevated load were found. Keep some open space in your plan.",
+      evidence: [
+        ...(highEvidence.length ? highEvidence : cautionEvidence).map(
+          (word) => `Your check-in included “${word}”`,
+        ),
+        "A basic estimate based on your evening check-in",
+      ],
+      disclaimer: "This is an estimate based on your voice and check-in, not a diagnosis.",
+    };
+  }
+
   const highWords = ["寝てない", "寝てなく", "頭が回らない", "限界", "無理"];
   const cautionWords = ["疲れ", "焦", "眠い", "しんどい", "余裕がない"];
   const highEvidence = highWords.filter((word) => transcript.includes(word));
@@ -47,7 +77,47 @@ function inferCondition(transcript: string): AnalysisResult["condition"] {
   };
 }
 
-function createGenericTasks(transcript: string): ExtractedTask[] {
+function createGenericTasks(transcript: string, isEnglish: boolean): ExtractedTask[] {
+  if (isEnglish) {
+    return transcript
+      .split(/[.!?\n]+/)
+      .map((sentence) => sentence.trim())
+      .filter((sentence) => sentence.length >= 4)
+      .slice(0, 5)
+      .map((sentence, index) => {
+        const normalized = sentence.toLowerCase();
+        const temporalContext: TemporalContext = /\b(yesterday|last week|last month)\b/.test(normalized)
+          ? "past"
+          : /\b(tomorrow)\b/.test(normalized)
+            ? "tomorrow"
+            : /\b(today|earlier)\b/.test(normalized)
+              ? "today"
+              : /\b(next week|next month|later)\b/.test(normalized)
+                ? "future"
+                : "unspecified";
+        const isEvent = /\b(meeting|appointment|interview|call)\b/.test(normalized);
+        const isLoadTopic = /\b(tired|sleepy|stressed|anxious|overwhelmed|can't focus|cannot focus)\b/.test(normalized);
+        const completed = /\b(finished|completed|submitted|done)\b/.test(normalized);
+        return {
+          id: `demo-task-${index + 1}`,
+          title: sentence.length > 60 ? `${sentence.slice(0, 60)}...` : sentence,
+          kind: isLoadTopic ? "topic" as const : isEvent ? "event" as const : "task" as const,
+          temporalContext,
+          status: completed ? "completed" as const : temporalContext === "tomorrow" || temporalContext === "future" ? "pending" as const : "unknown" as const,
+          type: isEvent ? "meeting" as const : "unknown" as const,
+          date: temporalContext === "tomorrow" ? "Tomorrow" : temporalContext === "today" ? "Today" : null,
+          startTime: normalizeClockTime(sentence),
+          endTime: null,
+          deadline: null,
+          people: [],
+          importance: index === 0 ? "high" as const : "medium" as const,
+          movable: !isEvent,
+          burden: isLoadTopic ? "high" as const : "medium" as const,
+          sourceText: sentence,
+        };
+      });
+  }
+
   const sentences = transcript
     .split(/[。！？\n]+/)
     .map((sentence) => sentence.trim())
@@ -118,14 +188,25 @@ function createGenericTasks(transcript: string): ExtractedTask[] {
   });
 }
 
-export function createDemoAnalysis(transcript: string): AnalysisResult {
-  const isPlanSample =
-    transcript.includes("A社") &&
-    transcript.includes("資料") &&
-    transcript.includes("Cさん");
+export function createDemoAnalysis(transcript: string, isEnglish = false): AnalysisResult {
+  const isPlanSample = isEnglish
+    ? transcript.includes("Acme") && transcript.includes("proposal") && transcript.includes("Chris")
+    : transcript.includes("A社") && transcript.includes("資料") && transcript.includes("Cさん");
 
   const tasks: ExtractedTask[] = isPlanSample
-    ? [
+    ? isEnglish
+      ? [
+          {
+            id: "task-budget", title: "Budget meeting with Acme", kind: "event", temporalContext: "tomorrow", status: "pending", type: "meeting", date: "Tomorrow", startTime: "10:00", endTime: "11:00", deadline: null, people: ["Acme"], importance: "high", movable: false, burden: "high", sourceText: "Budget meeting with Acme at 10 AM",
+          },
+          {
+            id: "task-deck", title: "Finish the proposal deck", kind: "task", temporalContext: "tomorrow", status: "pending", type: "focus_work", date: "Tomorrow", startTime: null, endTime: null, deadline: "Tomorrow", people: [], importance: "high", movable: true, burden: "high", sourceText: "Finish the proposal deck in the afternoon",
+          },
+          {
+            id: "task-brainstorm", title: "Brainstorm with Chris", kind: "event", temporalContext: "tomorrow", status: "pending", type: "meeting", date: "Tomorrow", startTime: "17:00", endTime: "18:00", deadline: null, people: ["Chris"], importance: "medium", movable: true, burden: "medium", sourceText: "Brainstorm with Chris at 5 PM",
+          },
+        ]
+      : [
         {
           id: "task-budget",
           title: "A社の予算会議",
@@ -177,8 +258,8 @@ export function createDemoAnalysis(transcript: string): AnalysisResult {
           burden: "medium",
           sourceText: "17時からCさんとブレスト",
         },
-      ]
-    : createGenericTasks(transcript);
+        ]
+    : createGenericTasks(transcript, isEnglish);
 
   return {
     tasks:
@@ -187,7 +268,7 @@ export function createDemoAnalysis(transcript: string): AnalysisResult {
         : [
             {
               id: "demo-task-1",
-              title: "発話内容",
+              title: isEnglish ? "Check-in notes" : "発話内容",
               kind: "topic",
               temporalContext: "unspecified",
               status: "unknown",
@@ -203,7 +284,7 @@ export function createDemoAnalysis(transcript: string): AnalysisResult {
               sourceText: transcript,
             },
           ],
-    condition: inferCondition(transcript),
+    condition: inferCondition(transcript, isEnglish),
   };
 }
 

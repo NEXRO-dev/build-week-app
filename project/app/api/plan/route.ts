@@ -21,7 +21,12 @@ export async function POST(request: Request) {
     const tomorrowTasks = input.tasks.filter(isTomorrowActionableTask);
     if (!tomorrowTasks.length && !input.calendarEvents.length) {
       return Response.json(
-        { code: "NO_TOMORROW_TASKS", error: "明日の予定がありません。" },
+        {
+          code: "NO_TOMORROW_TASKS",
+          error: input.locale === "us-en"
+            ? "There are no plans for tomorrow."
+            : "明日の予定がありません。",
+        },
         { status: 400 },
       );
     }
@@ -42,7 +47,7 @@ export async function POST(request: Request) {
         input.locale,
         input.calendarEvents,
       );
-      const plan = applySpokenTimesToPlan(completed, tomorrowTasks);
+      const plan = applySpokenTimesToPlan(completed, tomorrowTasks, input.locale);
       return Response.json({ plan, generationSource: "cloudflare" });
     } catch {
       const fallback = createTaskBasedPlan(
@@ -51,7 +56,7 @@ export async function POST(request: Request) {
         input.locale,
         input.calendarEvents,
       );
-      const plan = applySpokenTimesToPlan(fallback, tomorrowTasks);
+      const plan = applySpokenTimesToPlan(fallback, tomorrowTasks, input.locale);
       return Response.json({ plan, generationSource: "fallback" });
     }
   } catch (error) {

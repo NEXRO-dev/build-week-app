@@ -15,6 +15,7 @@ export async function PATCH(request: Request) {
       session.user.id,
       preferences.saveTranscript,
       preferences.requireCalendarApproval,
+      preferences.planReminderEnabled,
     );
     return Response.json({ preferences });
   } catch (error) {

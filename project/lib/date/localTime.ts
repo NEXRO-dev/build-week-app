@@ -19,6 +19,7 @@ export function resolveBrowserTimeZone() {
 export function getZonedNow(
   date = new Date(),
   timeZone = resolveBrowserTimeZone(),
+  locale: "jp-ja" | "us-en" = "jp-ja",
 ): ZonedNow {
   const parts = new Intl.DateTimeFormat("en-US", {
     timeZone,
@@ -37,7 +38,7 @@ export function getZonedNow(
       index === 0 ? String(value) : String(value).padStart(2, "0"),
     ).join("-"),
     hour: numericPart(parts, "hour"),
-    label: new Intl.DateTimeFormat("ja-JP", {
+    label: new Intl.DateTimeFormat(locale === "us-en" ? "en-US" : "ja-JP", {
       timeZone,
       month: "long",
       day: "numeric",

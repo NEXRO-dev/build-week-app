@@ -6,11 +6,12 @@ import { useEffect, useRef, useState } from "react";
 import { useI18n } from "@/lib/i18n";
 import {
   announcePushNotificationChange,
+  isRunningAsPwa,
   PUSH_NOTIFICATION_CHANGE_EVENT,
   vapidKeyToBytes,
 } from "@/lib/notifications/client";
 
-type PushState = "loading" | "unsupported" | "unconfigured" | "off" | "on" | "denied";
+type PushState = "loading" | "requires-pwa" | "unsupported" | "unconfigured" | "off" | "on" | "denied";
 
 export function NotificationBell({ timeZone }: { timeZone: string }) {
   const { locale, isEnglish, t } = useI18n();
@@ -27,6 +28,10 @@ export function NotificationBell({ timeZone }: { timeZone: string }) {
   useEffect(() => {
     let cancelled = false;
     async function loadState() {
+      if (!isRunningAsPwa()) {
+        if (!cancelled) setState("requires-pwa");
+        return;
+      }
       if (!("serviceWorker" in navigator) || !("PushManager" in window) || !("Notification" in window)) {
         if (!cancelled) setState("unsupported");
         return;
@@ -235,13 +240,14 @@ export function NotificationBell({ timeZone }: { timeZone: string }) {
               </div>
 
               {state === "unsupported" ? <p className="mt-3 rounded-lg bg-[#fff7e8] px-3 py-2 text-xs leading-5 text-[#8a5c12]">{t("このブラウザはPush通知に対応していません。iPhoneではホーム画面に追加したPWAからご利用ください。", "This browser does not support Push notifications. On iPhone, add Echly to your Home Screen first.")}</p> : null}
+              {state === "requires-pwa" ? <p className="mt-3 rounded-lg bg-[#fff7e8] px-3 py-2 text-xs leading-5 text-[#8a5c12]">{t("通知はPWAの場合のみ設定できます。Echlyをホーム画面に追加してから開いてください。", "Notifications can only be configured in the PWA. Add Echly to your Home Screen, then open it from there.")}</p> : null}
               {state === "denied" ? <p className="mt-3 rounded-lg bg-[#fff1f2] px-3 py-2 text-xs leading-5 text-[#a43a4a]">{t("通知がブロックされています。端末またはブラウザの設定からEchlyの通知を許可してください。", "Notifications are blocked. Allow Echly in your device or browser settings.")}</p> : null}
               {state === "unconfigured" ? <p className="mt-3 rounded-lg bg-[#fff7e8] px-3 py-2 text-xs leading-5 text-[#8a5c12]">{t("Push通知のサーバー設定が完了していません。", "The Push notification server has not been configured yet.")}</p> : null}
               {message ? <p role="status" className="mt-3 text-xs leading-5 text-[#59617e]">{message}</p> : null}
 
               {state !== "on" ? (
                 <div className="mt-4">
-                  <button type="button" disabled={busy || state === "loading" || state === "unsupported" || state === "denied" || state === "unconfigured"} onClick={enableNotifications} className="flex min-h-11 w-full items-center justify-center gap-2 rounded-lg bg-[#5b42ff] px-4 text-xs font-bold text-white disabled:bg-[#c7c9d4]">
+                  <button type="button" disabled={busy || state === "loading" || state === "requires-pwa" || state === "unsupported" || state === "denied" || state === "unconfigured"} onClick={enableNotifications} className="flex min-h-11 w-full items-center justify-center gap-2 rounded-lg bg-[#5b42ff] px-4 text-xs font-bold text-white disabled:bg-[#c7c9d4]">
                     {busy ? <LoaderCircle size={16} className="animate-spin" /> : <Bell size={16} />}{t("20:00の通知をオンにする", "Turn on 8:00 PM reminders")}
                   </button>
                 </div>

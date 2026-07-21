@@ -53,6 +53,7 @@ export type EchlyDatabase = {
     user_id: string;
     save_transcript: number;
     require_calendar_approval: number;
+    plan_reminder_enabled: number;
     updated_at: string;
   };
 };
@@ -66,7 +67,7 @@ const databaseGlobal = globalThis as typeof globalThis & {
 // Increment whenever createEchlySchema adds or changes database objects. This
 // ensures a Next.js dev server re-runs migrations after a hot reload instead of
 // reusing a schema promise created by an older version of this module.
-const ECHLY_SCHEMA_VERSION = 4;
+const ECHLY_SCHEMA_VERSION = 5;
 
 export const database =
   databaseGlobal.echlyDatabase ??
@@ -216,6 +217,9 @@ async function createEchlySchema() {
     .addColumn("require_calendar_approval", "integer", (column) =>
       column.notNull().defaultTo(1),
     )
+    .addColumn("plan_reminder_enabled", "integer", (column) =>
+      column.notNull().defaultTo(0),
+    )
     .addColumn("updated_at", "text", (column) => column.notNull())
     .execute();
 
@@ -227,6 +231,14 @@ async function createEchlySchema() {
       .alterTable("echly_user_preferences")
       .addColumn("require_calendar_approval", "integer", (column) =>
         column.notNull().defaultTo(1),
+      )
+      .execute();
+  }
+  if (!preferenceColumns.rows.some((column) => column.name === "plan_reminder_enabled")) {
+    await database.schema
+      .alterTable("echly_user_preferences")
+      .addColumn("plan_reminder_enabled", "integer", (column) =>
+        column.notNull().defaultTo(0),
       )
       .execute();
   }

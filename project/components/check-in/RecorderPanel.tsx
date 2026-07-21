@@ -67,11 +67,17 @@ function isSilentMeta(meta: AudioMeta) {
   return meta.averageVolume === 0 && meta.silenceRatio === 1;
 }
 
-function audioQualityHint(meta: AudioMeta | null) {
+function audioQualityHint(meta: AudioMeta | null, isEnglish: boolean) {
   if (!meta) return null;
-  if (meta.durationSec < 3) return "録音が短めです。5秒以上話すと認識しやすくなります。";
+  if (meta.durationSec < 3) {
+    return isEnglish
+      ? "This recording is short. Speaking for at least 5 seconds improves recognition."
+      : "録音が短めです。5秒以上話すと認識しやすくなります。";
+  }
   if (isSilentMeta(meta)) {
-    return "マイクの音声信号を確認できませんでした。録音を再生し、端末の入力マイクを確認してください。";
+    return isEnglish
+      ? "No microphone signal was detected. Play the recording and check your device's input microphone."
+      : "マイクの音声信号を確認できませんでした。録音を再生し、端末の入力マイクを確認してください。";
   }
   return null;
 }
@@ -90,7 +96,7 @@ export function RecorderPanel({
   isPrimaryDisabled = false,
   tone,
 }: Props) {
-  const { t } = useI18n();
+  const { isEnglish, t } = useI18n();
   const [isRecording, setIsRecording] = useState(false);
   const [elapsed, setElapsed] = useState(0);
   const recorderRef = useRef<MediaRecorder | null>(null);
@@ -99,7 +105,7 @@ export function RecorderPanel({
   const startedAtRef = useRef<number | null>(null);
   const audioUrl = useMemo(() => audioBlob ? URL.createObjectURL(audioBlob) : null, [audioBlob]);
   const [lastAudioMeta, setLastAudioMeta] = useState<AudioMeta | null>(null);
-  const qualityHint = audioQualityHint(lastAudioMeta);
+  const qualityHint = audioQualityHint(lastAudioMeta, isEnglish);
   const colors = toneStyles[tone];
 
   useEffect(() => () => { if (audioUrl) URL.revokeObjectURL(audioUrl); }, [audioUrl]);

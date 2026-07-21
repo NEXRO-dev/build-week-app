@@ -1,7 +1,8 @@
 "use client";
 
 import { Button } from "@heroui/react";
-import { Languages, LoaderCircle, Mic, ShieldCheck } from "lucide-react";
+import { Languages, LoaderCircle, ShieldCheck } from "lucide-react";
+import Image from "next/image";
 import Link from "next/link";
 import { type FormEvent, useState, useSyncExternalStore } from "react";
 import { createPortal } from "react-dom";
@@ -161,9 +162,14 @@ export function SignInView() {
       {canUsePortal ? createPortal(languageSwitcher, document.body) : null}
       <main className="grid min-h-dvh place-items-center bg-[#f7f8fc] px-5 py-20 text-[#111735]">
       <section className="w-full max-w-sm rounded-3xl border border-[#e5e7f1] bg-white px-6 py-8 text-center shadow-[0_20px_60px_rgba(27,35,83,0.08)]">
-        <span className="mx-auto grid size-14 place-items-center rounded-2xl bg-[#edeaff] text-[#5b42ff]">
-          <Mic size={27} />
-        </span>
+        <Image
+          src="/echly-favicon-v031.png"
+          alt=""
+          width={56}
+          height={56}
+          priority
+          className="mx-auto size-14 rounded-2xl"
+        />
         <p className="mt-5 text-xs font-bold tracking-[0.14em] text-[#5b42ff]">ECHLY</p>
         <h1 className="mt-2 text-2xl font-bold">{t("明日を、無理なく整える", "A calmer plan for tomorrow")}</h1>
         <p className="mt-3 text-sm leading-6 text-[#68708f]">

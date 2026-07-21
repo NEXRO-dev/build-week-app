@@ -29,6 +29,7 @@ function impactFor(task: ExtractedTask): PlanItem["impact"] {
 export function applySpokenTimesToPlan(
   plan: TomorrowPlan,
   tasks: ExtractedTask[],
+  locale: "jp-ja" | "us-en" = "jp-ja",
 ): TomorrowPlan {
   const timedTasks = tasks.filter((task) => normalizeClockTime(task.startTime));
   if (!timedTasks.length) return plan;
@@ -49,7 +50,9 @@ export function applySpokenTimesToPlan(
       originalTime: startTime,
       proposedTime: startTime,
       endTime: normalizeClockTime(task.endTime),
-      reason: "音声で指定された時刻を優先しました。",
+      reason: locale === "us-en"
+        ? "Kept the time specified in the recording."
+        : "音声で指定された時刻を優先しました。",
       impact: existing?.impact ?? impactFor(task),
     } satisfies PlanItem;
   });

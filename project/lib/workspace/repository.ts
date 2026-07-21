@@ -123,7 +123,11 @@ export async function loadWorkspace(userId: string) {
       .execute(),
     database
       .selectFrom("echly_user_preferences")
-      .select(["save_transcript", "require_calendar_approval"])
+      .select([
+        "save_transcript",
+        "require_calendar_approval",
+        "plan_reminder_enabled",
+      ])
       .where("user_id", "=", userId)
       .executeTakeFirst(),
   ]);
@@ -161,8 +165,35 @@ export async function loadWorkspace(userId: string) {
       requireCalendarApproval: preferences
         ? preferences.require_calendar_approval === 1
         : true,
+      planReminderEnabled: preferences
+        ? preferences.plan_reminder_enabled === 1
+        : false,
     },
   };
+}
+
+export async function getPlanRecordForDate(
+  userId: string,
+  targetDate: string,
+) {
+  await ensureEchlySchema();
+  const row = await database
+    .selectFrom("echly_plans")
+    .select("payload")
+    .where("user_id", "=", userId)
+    .where("target_date", "=", targetDate)
+    .executeTakeFirst();
+  return row ? parsePlanRecord(row.payload) : null;
+}
+
+export async function isPlanReminderEnabled(userId: string) {
+  await ensureEchlySchema();
+  const preferences = await database
+    .selectFrom("echly_user_preferences")
+    .select("plan_reminder_enabled")
+    .where("user_id", "=", userId)
+    .executeTakeFirst();
+  return preferences?.plan_reminder_enabled === 1;
 }
 
 async function upsertHistoryTranscript(
@@ -333,11 +364,13 @@ export async function updateWorkspacePreferences(
   userId: string,
   saveTranscript: boolean,
   requireCalendarApproval: boolean,
+  planReminderEnabled: boolean,
 ) {
   await ensureEchlySchema();
   const updatedAt = new Date().toISOString();
   const saveTranscriptValue = saveTranscript ? 1 : 0;
   const requireCalendarApprovalValue = requireCalendarApproval ? 1 : 0;
+  const planReminderEnabledValue = planReminderEnabled ? 1 : 0;
 
   await database
     .insertInto("echly_user_preferences")
@@ -345,12 +378,14 @@ export async function updateWorkspacePreferences(
       user_id: userId,
       save_transcript: saveTranscriptValue,
       require_calendar_approval: requireCalendarApprovalValue,
+      plan_reminder_enabled: planReminderEnabledValue,
       updated_at: updatedAt,
     })
     .onConflict((conflict) =>
       conflict.column("user_id").doUpdateSet({
         save_transcript: saveTranscriptValue,
         require_calendar_approval: requireCalendarApprovalValue,
+        plan_reminder_enabled: planReminderEnabledValue,
         updated_at: updatedAt,
       }),
     )

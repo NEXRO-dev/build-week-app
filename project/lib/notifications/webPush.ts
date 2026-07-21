@@ -10,7 +10,8 @@ export function isWebPushConfigured() {
 
 export async function sendWebPush(
   subscriptionJson: string,
-  payload: { title: string; body: string; url: string },
+  payload: { title: string; body: string; url: string; tag?: string },
+  options: { ttl?: number; urgency?: "very-low" | "low" | "normal" | "high" } = {},
 ) {
   const publicKey = getVapidPublicKey();
   const privateKey = process.env.VAPID_PRIVATE_KEY?.trim();
@@ -27,8 +28,11 @@ export async function sendWebPush(
       ...payload,
       icon: "/icon-192.png?v=0.3.1",
       badge: "/icon-192.png?v=0.3.1",
-      tag: "echly-daily-reflection",
+      tag: payload.tag ?? "echly-daily-reflection",
     }),
-    { TTL: 60 * 60 * 6, urgency: "normal" },
+    {
+      TTL: options.ttl ?? 60 * 60 * 6,
+      urgency: options.urgency ?? "normal",
+    },
   );
 }

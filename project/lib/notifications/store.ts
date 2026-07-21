@@ -70,6 +70,20 @@ async function ensureSchema() {
         CREATE INDEX IF NOT EXISTS push_subscriptions_user_idx
         ON push_subscriptions (user_id)
       `);
+      await db.execute(`
+        CREATE TABLE IF NOT EXISTS push_plan_notifications (
+          endpoint TEXT NOT NULL,
+          target_date TEXT NOT NULL,
+          item_id TEXT NOT NULL,
+          claimed_at TEXT NOT NULL,
+          sent_at TEXT,
+          PRIMARY KEY (endpoint, target_date, item_id)
+        )
+      `);
+      await db.execute(`
+        CREATE INDEX IF NOT EXISTS push_plan_notifications_date_idx
+        ON push_plan_notifications (target_date)
+      `);
     })().catch((error) => {
       schemaReady = null;
       throw error;
@@ -161,6 +175,77 @@ export async function getDuePushSubscriptions(now: Date, limit = 100) {
     args: [now.toISOString(), limit],
   });
   return result.rows.map((row) => rowToSubscription(row));
+}
+
+export async function getEnabledPushSubscriptions(limit = 500) {
+  await ensureSchema();
+  const result = await getClient().execute({
+    sql: `
+      SELECT endpoint, user_id, subscription_json, time_zone, locale,
+             next_notification_at, next_notification_kind
+      FROM push_subscriptions
+      WHERE enabled = 1
+      ORDER BY updated_at DESC
+      LIMIT ?
+    `,
+    args: [limit],
+  });
+  return result.rows.map((row) => rowToSubscription(row));
+}
+
+export async function claimPlanNotification(
+  endpoint: string,
+  targetDate: string,
+  itemId: string,
+  now: Date,
+) {
+  await ensureSchema();
+  const retryBefore = new Date(now.getTime() - 2 * 60_000).toISOString();
+  const result = await getClient().execute({
+    sql: `
+      INSERT INTO push_plan_notifications (
+        endpoint, target_date, item_id, claimed_at, sent_at
+      ) VALUES (?, ?, ?, ?, NULL)
+      ON CONFLICT(endpoint, target_date, item_id) DO UPDATE SET
+        claimed_at = excluded.claimed_at
+      WHERE push_plan_notifications.sent_at IS NULL
+        AND push_plan_notifications.claimed_at <= ?
+    `,
+    args: [endpoint, targetDate, itemId, now.toISOString(), retryBefore],
+  });
+  return result.rowsAffected === 1;
+}
+
+export async function markPlanNotificationSent(
+  endpoint: string,
+  targetDate: string,
+  itemId: string,
+  sentAt: Date,
+) {
+  await ensureSchema();
+  await getClient().execute({
+    sql: `
+      UPDATE push_plan_notifications
+      SET sent_at = ?
+      WHERE endpoint = ? AND target_date = ? AND item_id = ?
+    `,
+    args: [sentAt.toISOString(), endpoint, targetDate, itemId],
+  });
+}
+
+export async function releasePlanNotificationClaim(
+  endpoint: string,
+  targetDate: string,
+  itemId: string,
+) {
+  await ensureSchema();
+  await getClient().execute({
+    sql: `
+      DELETE FROM push_plan_notifications
+      WHERE endpoint = ? AND target_date = ? AND item_id = ? AND sent_at IS NULL
+    `,
+    args: [endpoint, targetDate, itemId],
+  });
 }
 
 export async function claimPushSubscription(subscription: StoredPushSubscription, now: Date) {

@@ -1,6 +1,9 @@
+"use client";
+
 import { Chip } from "@heroui/react";
 import type { LucideIcon } from "lucide-react";
 
+import { useI18n } from "@/lib/i18n";
 import type { PlanItem } from "@/types/echly";
 
 type PlanSectionProps = {
@@ -30,6 +33,7 @@ const toneStyles = {
 };
 
 export function PlanSection({ title, description, items, icon: Icon, tone }: PlanSectionProps) {
+  const { t } = useI18n();
   const styles = toneStyles[tone];
 
   return (
@@ -45,7 +49,7 @@ export function PlanSection({ title, description, items, icon: Icon, tone }: Pla
               <p className="mt-0.5 text-xs text-[#73807c]">{description}</p>
             </div>
             <Chip size="sm" variant="soft" color={styles.chip}>
-              {items.length}件
+              {t(`${items.length}件`, `${items.length} ${items.length === 1 ? "item" : "items"}`)}
             </Chip>
           </div>
 
@@ -68,7 +72,7 @@ export function PlanSection({ title, description, items, icon: Icon, tone }: Pla
                         </p>
                       ) : (
                         <p className="font-mono text-xs font-semibold text-[#41504c]">
-                          {item.proposedTime ?? item.originalTime ?? "時間未定"}
+                          {item.proposedTime ?? item.originalTime ?? t("時間未定", "Time TBD")}
                         </p>
                       )}
                     </div>
@@ -77,7 +81,7 @@ export function PlanSection({ title, description, items, icon: Icon, tone }: Pla
               ))}
             </div>
           ) : (
-            <p className="mt-4 text-sm text-[#7a8581]">該当する予定はありません。</p>
+            <p className="mt-4 text-sm text-[#7a8581]">{t("該当する予定はありません。", "No matching activities.")}</p>
           )}
         </div>
       </div>

@@ -60,7 +60,6 @@ const EMPTY_AUDIO_META: AudioMeta = {
 
 const HISTORY_STORAGE_KEY = "echly.checkins.v1";
 const SCHEDULE_STORAGE_KEY = "echly.schedule-entries.v1";
-const DEBUG_TIME_ZONE_STORAGE_KEY = "echly.debug-time-zone.v1";
 
 type ModeAudio = {
   blob: Blob | null;
@@ -77,6 +76,7 @@ type WorkspaceData = {
   preferences: {
     saveTranscript: boolean;
     requireCalendarApproval: boolean;
+    planReminderEnabled: boolean;
   };
 };
 
@@ -116,6 +116,7 @@ async function parseApiResponse<T>(
       CLOUDFLARE_REQUEST_FAILED: "AI processing could not be completed. Please try again later.",
       DATABASE_REQUEST_FAILED: "Your data could not be saved or loaded. Please try again.",
       INVALID_DATA: "The data could not be validated. Please try again.",
+      NO_TOMORROW_TASKS: "There are no actionable plans for tomorrow yet.",
     };
     const message = isEnglish
       ? englishErrors[data.code ?? ""] ?? "Something went wrong. Please try again."
@@ -290,17 +291,6 @@ function uniqueTasks(tasks: ExtractedTask[]) {
   return [...unique.values()];
 }
 
-function isValidTimeZone(value: string | null): value is string {
-  if (!value) return false;
-
-  try {
-    new Intl.DateTimeFormat("en-US", { timeZone: value }).format();
-    return true;
-  } catch {
-    return false;
-  }
-}
-
 type EchlyAppProps = {
   todayLabel: string;
   initialView?: WorkspaceView;
@@ -359,7 +349,8 @@ export function EchlyApp({
   initialView = "checkin",
   initialHistoryId = null,
 }: EchlyAppProps) {
-  const { isEnglish, t } = useI18n();
+  const { locale, isEnglish, t } = useI18n();
+  const isEnglishRef = useRef(isEnglish);
   const { data: session, isPending: isSessionPending } = authClient.useSession();
   const sessionUserId = session?.user.id ?? null;
   const [view, setView] = useState<WorkspaceView>(initialView);
@@ -394,23 +385,27 @@ export function EchlyApp({
   const [googleCalendarLoading, setGoogleCalendarLoading] = useState(false);
   const [storageLoaded, setStorageLoaded] = useState(false);
   const [zonedNow, setZonedNow] = useState<ZonedNow | null>(null);
-  const [debugTimeZone, setDebugTimeZone] = useState<string | null>(null);
   const [tabsPreloaded, setTabsPreloaded] = useState(false);
   const [workspacePreferences, setWorkspacePreferences] = useState<WorkspaceData["preferences"]>({
     saveTranscript: true,
     requireCalendarApproval: true,
+    planReminderEnabled: false,
   });
   const checkInWriteQueueRef = useRef<Promise<void>>(Promise.resolve());
   const planWriteQueueRef = useRef<Promise<void>>(Promise.resolve());
   const activeLocalDateRef = useRef<string | null>(null);
 
   useEffect(() => {
-    const timeZone = debugTimeZone ?? resolveBrowserTimeZone();
-    const updateClock = () => setZonedNow(getZonedNow(new Date(), timeZone));
+    isEnglishRef.current = isEnglish;
+  }, [isEnglish]);
+
+  useEffect(() => {
+    const timeZone = resolveBrowserTimeZone();
+    const updateClock = () => setZonedNow(getZonedNow(new Date(), timeZone, locale));
     updateClock();
     const intervalId = window.setInterval(updateClock, 30_000);
     return () => window.clearInterval(intervalId);
-  }, [debugTimeZone]);
+  }, [locale]);
 
   useEffect(() => {
     const currentLocalDate = zonedNow?.dateKey;
@@ -438,20 +433,6 @@ export function EchlyApp({
   }, [zonedNow?.dateKey]);
 
   useEffect(() => {
-    const timeoutId = window.setTimeout(() => {
-      try {
-        const savedTimeZone = window.localStorage.getItem(
-          DEBUG_TIME_ZONE_STORAGE_KEY,
-        );
-        if (isValidTimeZone(savedTimeZone)) setDebugTimeZone(savedTimeZone);
-      } catch {
-        // Debug settings are optional; fall back to the browser time zone.
-      }
-    }, 0);
-    return () => window.clearTimeout(timeoutId);
-  }, []);
-
-  useEffect(() => {
     if (!sessionUserId) return;
 
     let cancelled = false;
@@ -467,11 +448,12 @@ export function EchlyApp({
     }, 0);
 
     async function loadDatabaseWorkspace() {
+      const loadInEnglish = isEnglishRef.current;
       try {
         const response = await fetch("/api/workspace", { cache: "no-store" });
         const workspace = await parseApiResponse<WorkspaceData>(
           response,
-          isEnglish,
+          loadInEnglish,
         );
         const historyById = new Map(
           workspace.history.map((checkIn) => [checkIn.id, checkIn]),
@@ -563,7 +545,7 @@ export function EchlyApp({
                 scheduleEntries: legacyScheduleEntries.slice(0, 60),
               }),
             });
-            await parseApiResponse(importResponse, isEnglish);
+            await parseApiResponse(importResponse, loadInEnglish);
             window.localStorage.removeItem(HISTORY_STORAGE_KEY);
             window.localStorage.removeItem(SCHEDULE_STORAGE_KEY);
           } catch (migrationError) {
@@ -571,7 +553,7 @@ export function EchlyApp({
               setError(
                 migrationError instanceof Error
                   ? migrationError.message
-                  : isEnglish
+                  : loadInEnglish
                     ? "Existing browser data could not be migrated."
                     : "ブラウザ内の既存データを移行できませんでした。",
               );
@@ -591,7 +573,7 @@ export function EchlyApp({
           setError(
             caught instanceof Error
               ? caught.message
-              : isEnglish
+              : loadInEnglish
                 ? "Your data could not be loaded."
                 : "データを読み込めませんでした。",
           );
@@ -606,7 +588,7 @@ export function EchlyApp({
       cancelled = true;
       window.clearTimeout(resetStateId);
     };
-  }, [isEnglish, sessionUserId]);
+  }, [sessionUserId]);
 
   useEffect(() => {
     window.scrollTo({ top: 0, behavior: "auto" });
@@ -942,24 +924,6 @@ export function EchlyApp({
     await parseApiResponse(response, isEnglish);
   }
 
-  function handleDebugTimeZoneChange(timeZone: string | null) {
-    const nextTimeZone = isValidTimeZone(timeZone) ? timeZone : null;
-    setDebugTimeZone(nextTimeZone);
-
-    try {
-      if (nextTimeZone) {
-        window.localStorage.setItem(
-          DEBUG_TIME_ZONE_STORAGE_KEY,
-          nextTimeZone,
-        );
-      } else {
-        window.localStorage.removeItem(DEBUG_TIME_ZONE_STORAGE_KEY);
-      }
-    } catch {
-      // The setting still applies to the current session without persistence.
-    }
-  }
-
   function handleAudioReady(mode: CheckInMode, blob: Blob, meta: AudioMeta) {
     setAudioByMode((current) => ({ ...current, [mode]: { blob, meta } }));
     setError(null);
@@ -1028,7 +992,9 @@ export function EchlyApp({
       const confirmed = confirmedTranscript.trim();
       if (!confirmed) {
         throw new ApiClientError(
-          "確認した文字起こしを入力してください。",
+          isEnglish
+            ? "Enter the transcript you reviewed."
+            : "確認した文字起こしを入力してください。",
           "INPUT_REQUIRED",
         );
       }
@@ -1051,7 +1017,9 @@ export function EchlyApp({
 
         if (!resolved) {
           throw new ApiClientError(
-            "音声を認識できませんでした。もう一度録音してください。",
+            isEnglish
+              ? "The recording could not be recognized. Please record again."
+              : "音声を認識できませんでした。もう一度録音してください。",
             "NO_SPEECH_DETECTED",
           );
         }
@@ -1080,9 +1048,13 @@ export function EchlyApp({
     if (typed) return typed;
 
     throw new ApiClientError(
-      mode === "reflection"
-        ? "今日の振り返りと明日の予定を録音するか、テキストで入力してください。"
-        : "明日の予定を録音するか、テキストで入力してください。",
+      isEnglish
+        ? mode === "reflection"
+          ? "Record today's reflection and tomorrow's plans, or enter them as text."
+          : "Record tomorrow's plans or enter them as text."
+        : mode === "reflection"
+          ? "今日の振り返りと明日の予定を録音するか、テキストで入力してください。"
+          : "明日の予定を録音するか、テキストで入力してください。",
       "INPUT_REQUIRED",
     );
   }
@@ -1094,7 +1066,9 @@ export function EchlyApp({
       const confirmed = confirmedTranscript.trim();
       if (!confirmed) {
         throw new ApiClientError(
-          "確認した文字起こしを入力してください。",
+          isEnglish
+            ? "Enter the transcript you reviewed."
+            : "確認した文字起こしを入力してください。",
           "INPUT_REQUIRED",
         );
       }
@@ -1119,9 +1093,13 @@ export function EchlyApp({
         .join("\n\n");
       if (!text) {
         throw new ApiClientError(
-          mode === "reflection"
-            ? "STEP 1「今日の振り返り」を入力してください。"
-            : "STEP 2「明日の予定・タスク」を入力してください。",
+          isEnglish
+            ? mode === "reflection"
+              ? "Complete STEP 1: Today's reflection."
+              : "Complete STEP 2: Tomorrow's plans and tasks."
+            : mode === "reflection"
+              ? "STEP 1「今日の振り返り」を入力してください。"
+              : "STEP 2「明日の予定・タスク」を入力してください。",
           "INPUT_REQUIRED",
         );
       }
@@ -1194,14 +1172,18 @@ export function EchlyApp({
   ) {
     if (reflectionStatus !== "available" || !zonedNow || !localDate) {
       setError(
-        reflectionStatus === "completed"
-          ? "今日の振り返りはすでに完了しています。"
-          : "今日の振り返りは、端末のタイムゾーンで20:00以降に利用できます。",
+        isEnglish
+          ? reflectionStatus === "completed"
+            ? "Today's reflection is already complete."
+            : "Today's reflection is available after 8:00 PM in your device time zone."
+          : reflectionStatus === "completed"
+            ? "今日の振り返りはすでに完了しています。"
+            : "今日の振り返りは、端末のタイムゾーンで20:00以降に利用できます。",
       );
       return;
     }
     if (!isCompleteWorkloadSelfReport(completedReport)) {
-      setError("負荷の自己評価7項目に回答してください。");
+      setError(t("負荷の自己評価7項目に回答してください。", "Answer all seven load self-assessment questions."));
       return;
     }
 
@@ -1212,8 +1194,8 @@ export function EchlyApp({
     setError(null);
     setProcessingStage(
       confirmedTranscript === undefined
-        ? "今日と明日の内容を文字起こし中..."
-        : "今日と明日の内容を解析中...",
+        ? t("今日と明日の内容を文字起こし中...", "Transcribing today's reflection and tomorrow's plans...")
+        : t("今日と明日の内容を解析中...", "Analyzing today's reflection and tomorrow's plans..."),
     );
 
     try {
@@ -1229,7 +1211,7 @@ export function EchlyApp({
       const audioBaseline = history
         .filter(isPersonalVoiceHistory)
         .map((item) => item.audioMeta);
-      setProcessingStage("今日と明日の内容を解析中...");
+      setProcessingStage(t("今日と明日の内容を解析中...", "Analyzing today's reflection and tomorrow's plans..."));
 
       let result: AnalysisResult;
       let resolvedSource: "cloudflare" | "demo" = "cloudflare";
@@ -1250,7 +1232,7 @@ export function EchlyApp({
         result = await parseApiResponse<AnalysisResult>(response, isEnglish);
       } catch (caught) {
         if (!canUseDemoFallback(caught)) throw caught;
-        const demo = createDemoAnalysis(resolvedTranscript);
+        const demo = createDemoAnalysis(resolvedTranscript, isEnglish);
         result = {
           ...demo,
           condition: calculateLoadSignal({
@@ -1292,7 +1274,7 @@ export function EchlyApp({
       setError(
         caught instanceof Error
           ? caught.message
-          : "今日の振り返りを解析できませんでした。",
+          : t("今日の振り返りを解析できませんでした。", "Today's reflection could not be analyzed."),
       );
     } finally {
       setProcessingStage(null);
@@ -1302,7 +1284,10 @@ export function EchlyApp({
   async function handleAddSchedule(confirmedTranscript?: string) {
     if (!zonedNow || !localDate || !tomorrowDate) {
       setError(
-        "端末のタイムゾーンを確認中です。少し待ってからもう一度お試しください。",
+        t(
+          "端末のタイムゾーンを確認中です。少し待ってからもう一度お試しください。",
+          "Your device time zone is still being checked. Wait a moment and try again.",
+        ),
       );
       return;
     }
@@ -1310,8 +1295,8 @@ export function EchlyApp({
     setError(null);
     setProcessingStage(
       confirmedTranscript === undefined
-        ? "明日の予定を文字起こし中..."
-        : "予定とタスクを整理中...",
+        ? t("明日の予定を文字起こし中...", "Transcribing tomorrow's plans...")
+        : t("予定とタスクを整理中...", "Organizing plans and tasks..."),
     );
 
     try {
@@ -1325,7 +1310,7 @@ export function EchlyApp({
         audioByMode.planning.meta,
         resolvedTranscript,
       );
-      setProcessingStage("予定とタスクを整理中...");
+      setProcessingStage(t("予定とタスクを整理中...", "Organizing plans and tasks..."));
 
       let tasks: ExtractedTask[];
       let resolvedSource: "cloudflare" | "demo" = "cloudflare";
@@ -1346,7 +1331,7 @@ export function EchlyApp({
         tasks = result.tasks;
       } catch (caught) {
         if (!canUseDemoFallback(caught)) throw caught;
-        tasks = createDemoAnalysis(resolvedTranscript).tasks;
+        tasks = createDemoAnalysis(resolvedTranscript, isEnglish).tasks;
         resolvedSource = "demo";
       }
 
@@ -1354,7 +1339,9 @@ export function EchlyApp({
       const actionable = tasks.filter(isTomorrowActionableTask);
       if (!actionable.length) {
         throw new ApiClientError(
-          "明日の予定として確定できる内容が見つかりませんでした。日付や、やることを具体的にしてもう一度追加してください。",
+          isEnglish
+            ? "No actionable plans for tomorrow were found. Add a specific date or task and try again."
+            : "明日の予定として確定できる内容が見つかりませんでした。日付や、やることを具体的にしてもう一度追加してください。",
           "NO_TOMORROW_TASKS",
         );
       }
@@ -1384,7 +1371,7 @@ export function EchlyApp({
       setError(
         caught instanceof Error
           ? caught.message
-          : "明日の予定を追加できませんでした。",
+          : t("明日の予定を追加できませんでした。", "Tomorrow's plans could not be added."),
       );
     } finally {
       setProcessingStage(null);
@@ -1397,7 +1384,7 @@ export function EchlyApp({
 
     if (transcriptReview.mode === "reflection") {
       if (!pendingReflectionReport) {
-        setError("自己評価の回答を確認できませんでした。もう一度お試しください。");
+        setError(t("自己評価の回答を確認できませんでした。もう一度お試しください。", "Your self-assessment answers could not be verified. Please try again."));
         return;
       }
       await handleAnalyzeReflection(
@@ -1695,7 +1682,7 @@ export function EchlyApp({
         plan: TomorrowPlan;
         generationSource: PlanRecord["generationSource"];
       }>(response, isEnglish);
-      const nextPlan = applySpokenTimesToPlan(data.plan, planTasks);
+      const nextPlan = applySpokenTimesToPlan(data.plan, planTasks, locale);
       await persistPlan(nextPlan, data.generationSource);
       clearHomeDraftInputs();
       handleWorkspaceViewChange("plan");
@@ -1890,6 +1877,24 @@ export function EchlyApp({
     }
   }
 
+  async function handlePlanReminderChange(planReminderEnabled: boolean) {
+    const previousPreferences = workspacePreferences;
+    const nextPreferences = { ...previousPreferences, planReminderEnabled };
+    setWorkspacePreferences(nextPreferences);
+
+    try {
+      const response = await fetch("/api/workspace/preferences", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(nextPreferences),
+      });
+      await parseApiResponse(response, isEnglish);
+    } catch (caught) {
+      setWorkspacePreferences(previousPreferences);
+      throw caught;
+    }
+  }
+
   function startNewCheckIn() {
     setSelfReport({});
     setTranscriptByMode({ reflection: "", planning: "" });
@@ -2042,9 +2047,8 @@ export function EchlyApp({
             image: signedInUser.image,
           }}
           timeZone={zonedNow?.timeZone ?? resolveBrowserTimeZone()}
-          deviceTimeZone={resolveBrowserTimeZone()}
-          debugTimeZone={debugTimeZone}
-          onDebugTimeZoneChange={handleDebugTimeZoneChange}
+          planReminderEnabled={workspacePreferences.planReminderEnabled}
+          onPlanReminderChange={handlePlanReminderChange}
           requireCalendarApproval={workspacePreferences.requireCalendarApproval}
           onRequireCalendarApprovalChange={handleCalendarApprovalChange}
         />

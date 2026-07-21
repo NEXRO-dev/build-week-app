@@ -44,6 +44,7 @@ export function movePlanItemToTime(
   itemId: string,
   kind: EditablePlanItemKind,
   rawTime: string,
+  locale: "jp-ja" | "us-en" = "jp-ja",
 ): TomorrowPlan {
   const time = normalizeClockTime(rawTime);
   if (!time) return plan;
@@ -82,7 +83,9 @@ export function movePlanItemToTime(
               ...item,
               proposedTime: time,
               endTime,
-              reason: "プラン画面で時刻を変更しました。",
+              reason: locale === "us-en"
+                ? "Time changed on the plan screen."
+                : "プラン画面で時刻を変更しました。",
             }
           : item,
       ),
@@ -94,7 +97,9 @@ export function movePlanItemToTime(
     originalTime: source.originalTime ?? source.proposedTime,
     proposedTime: time,
     endTime,
-    reason: "プラン画面で時刻を変更しました。",
+    reason: locale === "us-en"
+      ? "Time changed on the plan screen."
+      : "プラン画面で時刻を変更しました。",
   };
 
   return {
