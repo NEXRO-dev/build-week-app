@@ -25,8 +25,8 @@ export async function sendWebPush(
     JSON.parse(subscriptionJson) as PushSubscription,
     JSON.stringify({
       ...payload,
-      icon: "/icon-192.png",
-      badge: "/icon-192.png",
+      icon: "/icon-192.png?v=0.3.1",
+      badge: "/icon-192.png?v=0.3.1",
       tag: "echly-daily-reflection",
     }),
     { TTL: 60 * 60 * 6, urgency: "normal" },

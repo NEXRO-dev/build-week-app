@@ -29,9 +29,9 @@ export const metadata: Metadata = {
     telephone: false,
   },
   icons: {
-    icon: [{ url: "/favicon.ico", sizes: "any" }],
-    shortcut: ["/favicon.ico"],
-    apple: [{ url: "/apple-touch-icon.png", sizes: "180x180", type: "image/png" }],
+    icon: [{ url: "/echly-favicon-v031.png", sizes: "256x256", type: "image/png" }],
+    shortcut: ["/echly-favicon-v031.png"],
+    apple: [{ url: "/apple-touch-icon.png?v=0.3.1", sizes: "180x180", type: "image/png" }],
   },
 };
 

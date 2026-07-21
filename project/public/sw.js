@@ -1,10 +1,10 @@
-const CACHE_NAME = "echly-shell-v2";
+const CACHE_NAME = "echly-shell-v3";
 const APP_SHELL = [
   "/",
-  "/icon-192.png",
-  "/icon-512.png",
-  "/icon-maskable-512.png",
-  "/apple-touch-icon.png",
+  "/icon-192.png?v=0.3.1",
+  "/icon-512.png?v=0.3.1",
+  "/icon-maskable-512.png?v=0.3.1",
+  "/apple-touch-icon.png?v=0.3.1",
 ];
 
 self.addEventListener("install", (event) => {
@@ -31,8 +31,8 @@ self.addEventListener("push", (event) => {
   event.waitUntil(
     self.registration.showNotification(data.title || "Echly", {
       body: data.body || "今日を振り返る時間です。",
-      icon: data.icon || "/icon-192.png",
-      badge: data.badge || "/icon-192.png",
+      icon: data.icon || "/icon-192.png?v=0.3.1",
+      badge: data.badge || "/icon-192.png?v=0.3.1",
       tag: data.tag || "echly-daily-reflection",
       data: { url: data.url || "/" },
     }),
