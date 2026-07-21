@@ -1,5 +1,7 @@
 # Echly
 
+**Current version: v0.4.1**
+
 > **Language note:** This README is presented in English first, followed by Japanese in each section. English is the primary language for international judges.
 
 
@@ -55,10 +57,12 @@ Echlyは「状態を測る」だけでなく、「明日何を守り、何を動
 - A review and approval screen before consequential actions
 - Daily history with transcripts, extracted tasks, workload details, and trend charts
 - Google OAuth and email/password authentication with Better Auth
-- Google Calendar import for the target day, conflict-aware planning, and synchronization of confirmed schedules
 - Per-user persistence in Turso without storing raw audio recordings
 - Automatic browser-language detection plus manual Japanese/English switching
-- PWA support, an 8:00 PM local-time Web Push reminder, and a conditional 11:30 PM follow-up when the daily check-in is incomplete
+- Plans persisted by date and retained when switching languages or reloading
+- One-week and one-month workload trend charts that begin at the first available data point
+- PWA support with browser-specific installation guides for Safari and Chrome
+- Web Push reminders at 8:00 PM, a conditional 11:30 PM follow-up, and optional reminders five minutes before confirmed plans
 - A controlled demo fallback when an external AI service is unavailable
 
 ### 日本語
@@ -73,17 +77,19 @@ Echlyは「状態を測る」だけでなく、「明日何を守り、何を動
 - 重要な操作前に内容を確認する承認画面
 - 文字起こし、抽出タスク、負荷詳細、推移グラフを確認できる日別履歴
 - Better AuthによるGoogle OAuthおよびメール／パスワード認証
-- 対象日のGoogle Calendar予定の読み込み、重複を避けたプラン作成、確定予定のカレンダー同期
 - Tursoへのユーザー別データ保存。生の録音音声は保存しない
 - 端末言語の自動判定と日本語／英語の手動切替
-- PWA対応、現地時刻20:00のWeb Push通知、未完了時のみ23:30に送る再通知
+- 日付単位で予定をDBへ保存し、言語変更や再読み込み後も維持
+- 初回データから表示する1週間・1か月の負荷スコア推移グラフ
+- Safari・Chromeを自動判定する画像付きPWA導入ガイド
+- PWA対応、現地時刻20:00の通知、未完了時の23:30再通知、確定予定の5分前通知
 - 外部AIサービスが利用できない場合の制御されたデモフォールバック
 
 ## 4. Demo（デモ）
 
 ### English
 
-**Public demo URL: To be added before submission.**
+**Public demo URL: [https://echly.xyz](https://echly.xyz)**
 
 Local routes:
 
@@ -93,8 +99,8 @@ Local routes:
 
 Recommended demo flow:
 
-1. Sign in with Google or an email address.
-2. After 8:00 PM in the device time zone, record today's reflection and tomorrow's plans. The debug time-zone setting can be used during judging.
+1. Open [https://echly.xyz](https://echly.xyz) and sign in with Google. A local setup is not required for product testing.
+2. Record today's reflection and tomorrow's plans.
 3. Review and, if necessary, correct the transcription.
 4. Inspect the extracted tasks, workload signal, and supporting evidence.
 5. Generate a tomorrow plan with protected commitments, rescheduling options, recovery blocks, and message drafts.
@@ -107,7 +113,7 @@ Sample prompt:
 
 ### 日本語
 
-**公開デモURL: 提出前に追記してください。**
+**公開デモURL: [https://echly.xyz](https://echly.xyz)**
 
 ローカルURL:
 
@@ -117,8 +123,8 @@ Sample prompt:
 
 推奨デモフロー:
 
-1. Googleまたはメールアドレスでログインする。
-2. 端末時刻の20:00以降に「今日の振り返り」と「明日の予定・タスク」を録音する。審査時は設定画面のデバッグ用タイムゾーンを利用できる。
+1. [https://echly.xyz](https://echly.xyz) にアクセスし、Googleでログインする。プロダクトの動作確認にローカル環境は不要です。
+2. 「今日の振り返り」と「明日の予定・タスク」を録音する。
 3. 文字起こしを確認し、必要なら編集して確定する。
 4. 抽出されたタスクと負荷シグナル、その根拠を確認する。
 5. 翌日プランを生成し、守る予定、延期候補、休息ブロック、連絡文案を確認する。
@@ -238,8 +244,7 @@ Use the deployed origin instead of `http://localhost:3000` in production.
 
 Enable the Google Calendar API in the same Google Cloud project, then add
 `https://www.googleapis.com/auth/calendar.events` to the OAuth consent screen.
-Echly requests this permission incrementally only when the user selects
-**Connect** for Google Calendar in Settings.
+The Google Calendar connection UI is currently hidden in the product.
 
 ### 日本語
 
@@ -255,7 +260,7 @@ Echly requests this permission incrementally only when the user selects
 
 ローカルではGoogle OAuthのリダイレクトURIに `http://localhost:3000/api/auth/callback/google` を登録し、本番ではデプロイ先のオリジンへ置き換えます。
 
-同じGoogle CloudプロジェクトでGoogle Calendar APIを有効化し、OAuth同意画面へ `https://www.googleapis.com/auth/calendar.events` スコープを追加してください。この権限は通常のGoogleログイン時には要求せず、設定画面でGoogle Calendarの「連携する」を選択した時だけ追加で要求します。
+Google Calendar連携UIは現在プロダクト上では非表示です。
 
 ## 8. Configuration（環境変数）
 
@@ -338,10 +343,32 @@ Authenticated users' check-ins, transcripts (when enabled), workload answers, au
 - echly_history_transcripts
 - echly_plans
 - echly_user_preferences
+- push_subscriptions
+- push_plan_notifications
 
 ## 10. Testing（テスト方法）
 
 ### English
+
+#### Test the deployed product
+
+1. Open [https://echly.xyz](https://echly.xyz).
+2. Select **Continue with Google** and complete Google sign-in.
+3. Record a reflection or plan, review the transcription, and confirm it.
+4. Verify that plans remain after a reload and after switching between Japanese and English.
+5. Open History and check the one-week and one-month workload charts.
+6. To test notifications, install Echly on the Home Screen as a PWA and enable notifications in Settings.
+
+A shared email/password account is also available when Google sign-in cannot be used:
+
+| Field | Value |
+| --- | --- |
+| Email | `tester@echly.xyz` |
+| Password | `&J,3Hj*YDd` |
+
+This is a shared test account. Do not enter personal or confidential information.
+
+#### Automated checks
 
 ```bash
 # Unit tests with the Node.js test runner
@@ -357,11 +384,31 @@ npx tsc --noEmit
 npm run build
 ```
 
-The current suite covers the 8:00–11:59 PM reflection window, transcription quality and hallucination handling, audio normalization, and browser-language selection.
+The current suite covers reflection-window rules, transcription quality and hallucination handling, browser-language selection, Google Calendar planning logic, notification timing, and five-minute plan reminders.
 
 ### 日本語
 
-現在のテストでは、20:00から23:59までの振り返り受付時間、文字起こし品質、無音ハルシネーション対策、音声正規化、ブラウザ言語からのロケール選択を主に検証しています。上記のコマンドで、ユニットテスト、Lint、型チェック、本番ビルドを個別に実行できます。
+#### 公開環境でのプロダクトテスト
+
+1. [https://echly.xyz](https://echly.xyz) を開く。
+2. **Googleで続ける**を選択し、Googleログインを完了する。
+3. 振り返りまたは予定を録音し、文字起こしを確認して確定する。
+4. 再読み込み後と言語切り替え後も予定が残ることを確認する。
+5. 履歴画面で1週間・1か月の負荷スコア推移を確認する。
+6. 通知を試す場合はEchlyをPWAとしてホーム画面へ追加し、設定画面で通知をオンにする。
+
+Googleログインを利用できない場合は、次の共有テスターアカウントも使用できます。
+
+| 項目 | 値 |
+| --- | --- |
+| メールアドレス | `tester@echly.xyz` |
+| パスワード | `&J,3Hj*YDd` |
+
+共有テスターアカウントには、個人情報や機密情報を入力しないでください。
+
+#### 自動テスト
+
+現在のテストでは、振り返り受付時間、文字起こし品質、無音ハルシネーション対策、ブラウザ言語判定、Google Calendarを考慮したプラン生成、通知時刻、予定の5分前通知を検証しています。上記のコマンドで、ユニットテスト、Lint、型チェック、本番ビルドを個別に実行できます。
 
 ## 11. Sample Data（サンプルデータ）
 
